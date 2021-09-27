@@ -1,0 +1,37 @@
+# depslib dependency file v1.0
+1437016518 source:d:\robotica\proyectos\seguidor de color\attiny84a_prueba\main.c
+	<iot84v.h>
+	<macros.h>
+	<math.h>
+	<stdint.h>
+	<stdlib.h>
+	<string.h>
+	<stdbool.h>
+	<stdio.h>
+	<ctype.h>
+	<stdarg.h>
+
+1589931070 source:c:\users\abel\documents\ing en electronica\10 semestre\proyecto\attiny84a_prueba\main.c
+	<iot84v.h>
+	<macros.h>
+	<math.h>
+	<stdint.h>
+	<stdlib.h>
+	<string.h>
+	<stdbool.h>
+	<stdio.h>
+	<ctype.h>
+	<stdarg.h>
+
+1590027719 source:c:\documents and settings\administrator\desktop\attiny84a_prueba\main.c
+	<iot84v.h>
+	<macros.h>
+	<math.h>
+	<stdint.h>
+	<stdlib.h>
+	<string.h>
+	<stdbool.h>
+	<stdio.h>
+	<ctype.h>
+	<stdarg.h>
+

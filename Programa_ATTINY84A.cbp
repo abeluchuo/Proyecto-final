@@ -1,0 +1,83 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes" ?>
+<CodeBlocks_project_file>
+	<FileVersion major="1" minor="6" />
+	<Project>
+		<Option title="Programa_ATTINY84A" />
+		<Option pch_mode="2" />
+		<Option compiler="iccavr" />
+		<Build>
+			<Target title="default">
+				<Option output="../ATTINY84A_Prueba/Programa_ATTINY84A" prefix_auto="0" extension_auto="0" />
+				<Option working_dir="./.." />
+				<Option object_output="../ATTINY84A_Prueba/.objs" />
+				<Option type="1" />
+				<Option compiler="iccavr" />
+				<Option use_console_runner="0" />
+				<Option projectCompilerOptionsRelation="1" />
+				<Option projectLinkerOptionsRelation="1" />
+				<Option projectIncludeDirsRelation="1" />
+				<Option projectResourceIncludeDirsRelation="1" />
+				<Option projectLibDirsRelation="1" />
+				<Compiler>
+					<Add option="-e" />
+					<Add option="-D__ICC_VERSION=83001" />
+					<Add option="-DATtiny84" />
+					<Add option="-l" />
+					<Add option="-A" />
+					<Add option="-g" />
+					<Add option="-MEnhanced" />
+					<Add option="-Wa-W" />
+					<Add option="-D__BUILD=362" />
+				</Compiler>
+				<Linker>
+					<Add option="-mATtiny84" />
+					<Add option="-g" />
+					<Add option="-e:0x2000" />
+					<Add option="-Wl-W" />
+					<Add option="-bfunc_lit:0x22.0x2000" />
+					<Add option="-dram_end:0x25f" />
+					<Add option="-bdata:0x60.0x25f" />
+					<Add option="-dhwstk_size:20" />
+					<Add option="-beeprom:0.512" />
+					<Add option="-fihx_coff" />
+					<Add option="-S2" />
+					<Add option="-nb:362" />
+					<Add library="cavr" />
+				</Linker>
+			</Target>
+		</Build>
+		<Compiler>
+			<Add option="-e" />
+			<Add option="-DATtiny84" />
+			<Add option="-l" />
+			<Add option="-A" />
+			<Add option="-g" />
+			<Add option="-MEnhanced" />
+			<Add option="-Wa-W" />
+			<Add option="-D__ICC_VERSION=80401" />
+			<Add option="-D__BUILD=362" />
+		</Compiler>
+		<Linker>
+			<Add option="-mATtiny84" />
+			<Add option="-g" />
+			<Add option="-e:0x2000" />
+			<Add option="-Wl-W" />
+			<Add option="-bfunc_lit:0x22.0x2000" />
+			<Add option="-dram_end:0x25f" />
+			<Add option="-bdata:0x60.0x25f" />
+			<Add option="-dhwstk_size:20" />
+			<Add option="-beeprom:0.512" />
+			<Add option="-fihx_coff" />
+			<Add option="-S2" />
+			<Add option="-nb:362" />
+			<Add library="cavr" />
+		</Linker>
+		<Unit filename="main.c">
+			<Option compilerVar="CC" />
+		</Unit>
+		<Extensions>
+			<code_completion />
+			<debugger />
+		</Extensions>
+	</Project>
+</CodeBlocks_project_file>

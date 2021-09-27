@@ -1,0 +1,4846 @@
+NOTE: Code bytes are displayed in order matching the disassembly format in AVR documentation.
+  For example, 'CALL 2B16' (example only, only labels should normally be used) is displayed as
+  0x940E2B16 rather than in little endian byte order.
+
+Interrupt Vectors
+
+Program Code (text area)
+_main:
+  i                    --> R20
+  i                    --> R20
+  i                    --> R20
+  i                    --> R20
+  i                    --> R20
+  i                    --> R20
+    00094 9722      SBIW	R28,2
+FILE: C:\Documents and Settings\Administrator\Desktop\ATTINY84A_Prueba\main.c
+(0001) 
+(0002) 
+(0003) // Target : TINY84A
+(0004) // Crystal: 20.0000Mhz
+(0005) 
+(0006) #include <iot84v.h>
+(0007) #include <macros.h>
+(0008) #include <math.h>
+(0009) #include <stdint.h>
+(0010) #include <stdlib.h>
+(0011) #include <string.h>
+(0012) #include <stdbool.h>
+(0013) #include <stdio.h>
+(0014) #include <ctype.h>
+(0015) #include <stdarg.h>
+(0016) 
+(0017) //!******************************************************** CONEXIONES *****************************************************
+(0018) //                                                   -----------\/-----------
+(0019) //                                      5v         =| VCC          GND       |= GND
+(0020) //                                      XTAL 20MHz =| PB0(XT1)     PA0(ADC0) |= NC
+(0021) //                                      XTAL 20MHz =| PB1(XT2)     PA1(ADC1) |= S3
+(0022) //                                      RESET      =| PB3(REST)    PA2(ADC2) |= S2
+(0023) //                                      SS (SPI)   =| PB2(INT0)    PA3(T0)   |= OUT
+(0024) //                                      NC         =| PA7(ADC7)    PA4(USCK) |= SCK (SPI)
+(0025) //                                      DI (SPI)   =| PA6(MOSI)    PA5(MISO) |= DO  (SPI)
+(0026) //                                                   ------------------------
+(0027) 
+(0028) #define TCS_OUT_DDR DDRA
+(0029) #define TCS_OUT_PORT PINA
+(0030) #define TCS_OUT_POS PA3
+(0031) 
+(0032) //!****************************************************** DECLARACIONES ****************************************************
+(0033) void    MideF(int color, int Texp); //Texp=1 500us, Texp=2 1ms, Texp=3 1.5ms, Texp=4 2ms
+(0034) void    CorrigeSensorColor(int Rr, int Gr, int Br);
+(0035) void    CargaParametros(void);
+(0036) void    GuardaParametros(void);
+(0037) //void    EnviaHex(unsigned int valor);
+(0038) uint8_t SPI_SlaveTransfer(uint8_t Dato, char llamada);
+(0039) uint8_t EEPROM_read(uint16_t ucAddress);
+(0040) void    EEPROM_write(uint16_t ucAddress, unsigned char ucData);
+(0041) void    Config(void);
+(0042) void    delayus(unsigned int usec);
+(0043) void    delay_ms(uint32_t msec);
+(0044) 
+(0045) void    enviaEEPROM(void);
+(0046) 
+(0047) 
+(0048) 
+(0049) //!******************************************************* VARIABLES *******************************************************
+(0050) //Variables
+(0051) 
+(0052) uint8_t Esclavo_ID=1, DatoSPI;
+(0053) int ss=0,inicio=0;
+(0054) int ovf=0;
+(0055) uint8_t conteo;
+(0056) uint8_t rr[4],rg[4],rb[4];
+(0057) char  banConteo;
+(0058) char caracter;
+(0059) char Texp=1; //indice del tiempo de exposicion
+(0060) char     Haciendo=0;            //parte del ciclo que se encuentra haciendo con el Master
+(0061) 
+(0062) 
+(0063) float Ha,Sa,Va;
+(0064) 
+(0065) 
+(0066) 
+(0067) //Comandos de correccion de color
+(0068) uint8_t BalanceNegros=1;    //Si 1: hace balance de negros
+(0069) uint8_t BalanceBlancos=1;   //Si 1: hace balance de blancos
+(0070) uint8_t CorregirGama=1;     //Si 1: aplica la correccion gama
+(0071) uint8_t CorregirColor=0;    //Si 1: aplica matriz de correccion de color
+(0072) uint8_t CorregirHSV=1;      //Si 1: aplica la correcion de color HSV
+(0073) uint8_t ObtenerRGBdeHSV=0;  //Si 1: recalcula RGB de HSV
+(0074) uint8_t umbralGris=120;   // umbral en HSV2RGB de grises
+(0075) 
+(0076) //Paramaetros correcion de blancos y negros
+(0077) float rslm = 0.9744;
+(0078) float rslb = 19.8418;
+(0079) float gslm = 1.2165;
+(0080) float gslb = 21.5859;
+(0081) float bslm = 1.3172;
+(0082) float bslb = 20.3862;
+(0083) 
+(0084) //Parametros minimos cuadrados rgb
+(0085) float mcrm=1.4948;
+(0086) float mcrb=-52.5315;
+(0087) float mcgm=1.5475;
+(0088) float mcgb=-47.1519;
+(0089) float mcbm=1.4906;
+(0090) float mcbb=-42.2013;
+(0091) 
+(0092) //Parametros minimos cuadrados hsv
+(0093) float mchm=0.8578;
+(0094) float mchb=0.0691;
+(0095) float mcsm=1.5721;
+(0096) float mcsb=-0.0240;
+(0097) float mcvm=0.8052;
+(0098) float mcvb=0.1945;
+(0099) 
+(0100) int MHSV11=255;                      // matriz de correccion HSV
+(0101) int MHSV12=0;
+(0102) int MHSV13=0;
+(0103) int MHSV21=0;
+(0104) int MHSV22=321;
+(0105) int MHSV23=29;
+(0106) int MHSV31=0;
+(0107) int MHSV32=62;
+(0108) int MHSV33=265;
+(0109) 
+(0110) 
+(0111) uint8_t cbn[6];
+(0112) float buff[18];
+(0113) int buffint[9];
+(0114) uint8_t storage [72], storageint[18];
+(0115) size_t sizefloat;
+(0116) uint8_t cr,cg,Hl,Hh;
+(0117) 
+(0118) uint8_t R,G,B;                      //Valores RGB
+(0119) uint8_t S,V;                        //Valores HSB
+(0120) uint16_t H;
+(0121) 
+(0122) 
+(0123) //!***************************************************** PROGRAMA PRINCIPAL ***********************************************
+(0124) void main(void)
+(0125) {
+(0126) 
+(0127)     GuardaParametros();
+    00095 D894      RCALL	_GuardaParametros
+(0128)     Config();
+    00096 D831      RCALL	_Config
+    00097 C133      RJMP	0x01CB
+(0129) 
+(0130) 
+(0131)     //EnviaHex(200);
+(0132)     //i= SPI_SlaveTransfer(0xAB); //usar con alguna interrupcion en pin
+(0133)     //i= SPI_SlaveTransfer(0xF1);
+(0134) 
+(0135) //    double val,Kt=100;
+(0136) //    for(i=0;i<256;i++)
+(0137) //    {
+(0138) //        val=i;
+(0139) //        val=val/Kt;
+(0140) //        val=(1-exp(val))*255;
+(0141) //        Gama[i]= (unsigned char)val;
+(0142) //    }
+(0143)     //CargaParametros();
+(0144)     //GuardaParametros();
+(0145) 
+(0146) 
+(0147) 
+(0148) 
+(0149) 
+(0150) 
+(0151)     while(1)
+(0152)     {
+(0153)         if(Haciendo==0)
+    00098 9020 0068 LDS	R2,_Haciendo
+    0009A 2022      TST	R2
+    0009B F449      BNE	0x00A5
+(0154)         {
+(0155)             PORTA |= 0x06; //PA2 y PA1 apagar
+    0009C B38B      IN	R24,0x1B
+    0009D 6086      ORI	R24,6
+    0009E BB8B      OUT	0x1B,R24
+(0156)             //Esperar comando del maestro
+(0157)             //'C':   //Adquirir color y enviar RGB
+(0158)             //'H':   //Adquirir color y enviar HSV
+(0159)             //'D':   //Adquirir color y enviar RGB y HSV
+(0160)             //'P':   //El maestro va a actualizar los parametros de correccion de color
+(0161)             //'R':   //El maestro va a leer los parametros de correccion de color
+(0162)             Haciendo=SPI_SlaveTransfer(1,0); //Esperar comando del Master
+    0009F 2722      CLR	R18
+    000A0 E001      LDI	R16,1
+    000A1 D804      RCALL	_SPI_SlaveTransfer
+    000A2 9300 0068 STS	_Haciendo,R16
+(0163)             //PORTA &= ~0x06; //PA2 y PA1 encender
+(0164) 
+(0165)         }
+    000A4 C126      RJMP	0x01CB
+(0166)         else
+(0167)         {
+(0168)             switch(Haciendo)
+    000A5 9140 0068 LDS	R20,_Haciendo
+    000A7 3443      CPI	R20,0x43
+    000A8 F081      BEQ	0x00B9
+    000A9 3444      CPI	R20,0x44
+    000AA F409      BNE	0x00AC
+    000AB C11F      RJMP	0x01CB
+    000AC 3448      CPI	R20,0x48
+    000AD F409      BNE	0x00AF
+    000AE C11C      RJMP	0x01CB
+    000AF 3443      CPI	R20,0x43
+    000B0 F408      BCC	0x00B2
+    000B1 C116      RJMP	0x01C8
+    000B2 3540      CPI	R20,0x50
+    000B3 F409      BNE	0x00B5
+    000B4 C081      RJMP	0x0136
+    000B5 3542      CPI	R20,0x52
+    000B6 F409      BNE	0x00B8
+    000B7 C0CC      RJMP	0x0184
+    000B8 C10F      RJMP	0x01C8
+(0169)             {
+(0170)                 case 'C':   //Adquirir color y enviar RGB
+(0171)                             if(ss==1){
+    000B9 9180 0061 LDS	R24,_ss
+    000BB 9190 0062 LDS	R25,_ss+1
+    000BD 3081      CPI	R24,1
+    000BE E0E0      LDI	R30,0
+    000BF 079E      CPC	R25,R30
+    000C0 F009      BEQ	0x00C2
+    000C1 C06B      RJMP	0x012D
+(0172)                                 MideF(0,4); //rojo Texp=2ms
+    000C2 E024      LDI	R18,4
+    000C3 E030      LDI	R19,0
+    000C4 2700      CLR	R16
+    000C5 2711      CLR	R17
+    000C6 D107      RCALL	_MideF
+(0173)                                 while(banConteo!=1){}; //esperar mientras se hace la medición del sensor 0
+    000C7 9180 019E LDS	R24,_banConteo
+    000C9 3081      CPI	R24,1
+    000CA F7E1      BNE	0x00C7
+(0174)                                 SPI_SlaveTransfer(conteo,0);
+    000CB 2722      CLR	R18
+    000CC 9100 01AB LDS	R16,_conteo
+    000CE D7D7      RCALL	_SPI_SlaveTransfer
+(0175)                                 cr=conteo;
+    000CF 9020 01AB LDS	R2,_conteo
+    000D1 9220 00D4 STS	_cr,R2
+(0176)                                 MideF(1,4); //verde Texp=2ms
+    000D3 E024      LDI	R18,4
+    000D4 E030      LDI	R19,0
+    000D5 E001      LDI	R16,1
+    000D6 E010      LDI	R17,0
+    000D7 D0F6      RCALL	_MideF
+(0177)                                 while(banConteo!=1){}; //esperar mientras se hace la medición del sensor 0
+    000D8 9180 019E LDS	R24,_banConteo
+    000DA 3081      CPI	R24,1
+    000DB F7E1      BNE	0x00D8
+(0178)                                 SPI_SlaveTransfer(conteo,0);
+    000DC 2722      CLR	R18
+    000DD 9100 01AB LDS	R16,_conteo
+    000DF D7C6      RCALL	_SPI_SlaveTransfer
+(0179)                                 cg=conteo;
+    000E0 9020 01AB LDS	R2,_conteo
+    000E2 9220 00D3 STS	_cg,R2
+(0180)                                 MideF(2,4); //azul Texp=2ms
+    000E4 E024      LDI	R18,4
+    000E5 E030      LDI	R19,0
+    000E6 E002      LDI	R16,2
+    000E7 E010      LDI	R17,0
+    000E8 D0E5      RCALL	_MideF
+(0181)                                 while(banConteo!=1){}; //esperar mientras se hace la medición del sensor 0
+    000E9 9180 019E LDS	R24,_banConteo
+    000EB 3081      CPI	R24,1
+    000EC F7E1      BNE	0x00E9
+(0182)                                 SPI_SlaveTransfer(conteo,0);
+    000ED 2722      CLR	R18
+    000EE 9100 01AB LDS	R16,_conteo
+    000F0 D7B5      RCALL	_SPI_SlaveTransfer
+(0183)                                 CorrigeSensorColor(cr,cg,conteo);
+    000F1 9020 01AB LDS	R2,_conteo
+    000F3 2433      CLR	R3
+    000F4 8239      STD	Y+1,R3
+    000F5 8228      ST	Y,R2
+    000F6 9120 00D3 LDS	R18,_cg
+    000F8 2733      CLR	R19
+    000F9 9100 00D4 LDS	R16,_cr
+    000FB 2711      CLR	R17
+    000FC D129      RCALL	_CorrigeSensorColor
+(0184)                                 Hh=H>>8;          //parte alta
+    000FD 9020 00CA LDS	R2,_H
+    000FF 9030 00CB LDS	R3,_H+1
+    00101 2C23      MOV	R2,R3
+    00102 2433      CLR	R3
+    00103 9220 00D1 STS	_Hh,R2
+(0185)                                 Hl=H&0x00FF;   //parte baja
+    00105 9180 00CA LDS	R24,_H
+    00107 7F8F      ANDI	R24,0xFF
+    00108 9380 00D2 STS	_Hl,R24
+(0186)                                 SPI_SlaveTransfer(R,0);
+    0010A 2722      CLR	R18
+    0010B 9100 00D0 LDS	R16,_R
+    0010D D798      RCALL	_SPI_SlaveTransfer
+(0187)                                 SPI_SlaveTransfer(G,0);
+    0010E 2722      CLR	R18
+    0010F 9100 00CF LDS	R16,_G
+    00111 D794      RCALL	_SPI_SlaveTransfer
+(0188)                                 SPI_SlaveTransfer(B,0);
+    00112 2722      CLR	R18
+    00113 9100 00CE LDS	R16,_B
+    00115 D790      RCALL	_SPI_SlaveTransfer
+(0189)                                 SPI_SlaveTransfer(Hl,0);
+    00116 2722      CLR	R18
+    00117 9100 00D2 LDS	R16,_Hl
+    00119 D78C      RCALL	_SPI_SlaveTransfer
+(0190)                                 SPI_SlaveTransfer(Hh,0);
+    0011A 2722      CLR	R18
+    0011B 9100 00D1 LDS	R16,_Hh
+    0011D D788      RCALL	_SPI_SlaveTransfer
+(0191)                                 SPI_SlaveTransfer(S,0);
+    0011E 2722      CLR	R18
+    0011F 9100 00CD LDS	R16,_S
+    00121 D784      RCALL	_SPI_SlaveTransfer
+(0192)                                 SPI_SlaveTransfer(V,0);
+    00122 2722      CLR	R18
+    00123 9100 00CC LDS	R16,_V
+    00125 D780      RCALL	_SPI_SlaveTransfer
+(0193)                                 SPI_SlaveTransfer(ovf,0);
+    00126 2722      CLR	R18
+    00127 9100 0065 LDS	R16,_ovf
+    00129 D77C      RCALL	_SPI_SlaveTransfer
+(0194) 
+(0195) 
+(0196)                                 Haciendo=0;
+    0012A 2422      CLR	R2
+    0012B 9220 0068 STS	_Haciendo,R2
+(0197)                             }
+(0198)                             Haciendo=0;
+    0012D 2422      CLR	R2
+    0012E 9220 0068 STS	_Haciendo,R2
+(0199)                             ss=0;
+    00130 2433      CLR	R3
+    00131 9230 0062 STS	_ss+1,R3
+    00133 9220 0061 STS	_ss,R2
+(0200)                             break;
+    00135 C095      RJMP	0x01CB
+(0201) 
+(0202) 
+(0203) 
+(0204) 
+(0205)                 case 'H':   //Adquirir color y enviar HSV
+(0206) 
+(0207)                             break;
+(0208) 
+(0209)                 case 'D':   //Adquirir color y enviar RGB y HSV
+(0210) 
+(0211)                             break;
+(0212) 
+(0213)                 case 'P':   //El maestro esta actualizando los parametros de correccion de color
+(0214)                             if(ss==1){
+    00136 9180 0061 LDS	R24,_ss
+    00138 9190 0062 LDS	R25,_ss+1
+    0013A 3081      CPI	R24,1
+    0013B E0E0      LDI	R30,0
+    0013C 079E      CPC	R25,R30
+    0013D F009      BEQ	0x013F
+    0013E C03C      RJMP	0x017B
+(0215)                                 for(int i=1; i<7;i++){
+    0013F E041      LDI	R20,1
+    00140 E050      LDI	R21,0
+    00141 C00A      RJMP	0x014C
+(0216)                                     DatoSPI=SPI_SlaveTransfer(2,0);
+    00142 2722      CLR	R18
+    00143 E002      LDI	R16,2
+    00144 D761      RCALL	_SPI_SlaveTransfer
+    00145 9300 01AC STS	_DatoSPI,R16
+(0217)                                     EEPROM_write(i,DatoSPI);
+    00147 2F20      MOV	R18,R16
+    00148 018A      MOVW	R16,R20
+    00149 D774      RCALL	_EEPROM_write
+    0014A 5F4F      SUBI	R20,0xFF
+    0014B 4F5F      SBCI	R21,0xFF
+    0014C E087      LDI	R24,7
+    0014D E090      LDI	R25,0
+    0014E 1748      CP	R20,R24
+    0014F 0759      CPC	R21,R25
+    00150 F38C      BLT	0x0142
+(0218)                                 }
+(0219)                                 for(int i=9; i<81;i++){
+    00151 E049      LDI	R20,0x9
+    00152 E050      LDI	R21,0
+    00153 C00B      RJMP	0x015F
+(0220)                                     DatoSPI=SPI_SlaveTransfer(3,0);
+    00154 2722      CLR	R18
+    00155 E003      LDI	R16,3
+    00156 D74F      RCALL	_SPI_SlaveTransfer
+    00157 2EA0      MOV	R10,R16
+    00158 92A0 01AC STS	_DatoSPI,R10
+(0221)                                     EEPROM_write(i,DatoSPI);
+    0015A 2D2A      MOV	R18,R10
+    0015B 018A      MOVW	R16,R20
+    0015C D761      RCALL	_EEPROM_write
+    0015D 5F4F      SUBI	R20,0xFF
+    0015E 4F5F      SBCI	R21,0xFF
+    0015F E581      LDI	R24,0x51
+    00160 E090      LDI	R25,0
+    00161 1748      CP	R20,R24
+    00162 0759      CPC	R21,R25
+    00163 F384      BLT	0x0154
+(0222)                                 }
+(0223)                                 for(int i=200; i<218;i++){
+    00164 EC48      LDI	R20,0xC8
+    00165 E050      LDI	R21,0
+    00166 C00B      RJMP	0x0172
+(0224)                                     DatoSPI=SPI_SlaveTransfer(4,0);
+    00167 2722      CLR	R18
+    00168 E004      LDI	R16,4
+    00169 D73C      RCALL	_SPI_SlaveTransfer
+    0016A 2EA0      MOV	R10,R16
+    0016B 92A0 01AC STS	_DatoSPI,R10
+(0225)                                     EEPROM_write(i,DatoSPI);
+    0016D 2D2A      MOV	R18,R10
+    0016E 018A      MOVW	R16,R20
+    0016F D74E      RCALL	_EEPROM_write
+    00170 5F4F      SUBI	R20,0xFF
+    00171 4F5F      SBCI	R21,0xFF
+    00172 ED8A      LDI	R24,0xDA
+    00173 E090      LDI	R25,0
+    00174 1748      CP	R20,R24
+    00175 0759      CPC	R21,R25
+    00176 F384      BLT	0x0167
+(0226)                                 }
+(0227)                                 CargaParametros(); //actualiza parametro
+    00177 D413      RCALL	_CargaParametros
+(0228)                                 Haciendo=0;
+    00178 2422      CLR	R2
+    00179 9220 0068 STS	_Haciendo,R2
+(0229)                             }
+(0230)                             Haciendo=0;
+    0017B 2422      CLR	R2
+    0017C 9220 0068 STS	_Haciendo,R2
+(0231)                             ss=0;
+    0017E 2433      CLR	R3
+    0017F 9230 0062 STS	_ss+1,R3
+    00181 9220 0061 STS	_ss,R2
+(0232)                             break;
+    00183 C047      RJMP	0x01CB
+(0233) 
+(0234)                 case 'R':   //El maestro esta leyendo los parametros de correccion de color
+(0235)                             if(ss==1){
+    00184 9180 0061 LDS	R24,_ss
+    00186 9190 0062 LDS	R25,_ss+1
+    00188 3081      CPI	R24,1
+    00189 E0E0      LDI	R30,0
+    0018A 079E      CPC	R25,R30
+    0018B F599      BNE	0x01BF
+(0236)                                 for(int i=1; i<7;i++){
+    0018C E041      LDI	R20,1
+    0018D E050      LDI	R21,0
+    0018E C009      RJMP	0x0198
+(0237)                                     DatoSPI = EEPROM_read(i);
+    0018F 018A      MOVW	R16,R20
+    00190 D726      RCALL	_EEPROM_read
+    00191 2EA0      MOV	R10,R16
+    00192 92A0 01AC STS	_DatoSPI,R10
+(0238)                                     SPI_SlaveTransfer(DatoSPI,0);
+    00194 2722      CLR	R18
+    00195 D710      RCALL	_SPI_SlaveTransfer
+    00196 5F4F      SUBI	R20,0xFF
+    00197 4F5F      SBCI	R21,0xFF
+    00198 E087      LDI	R24,7
+    00199 E090      LDI	R25,0
+    0019A 1748      CP	R20,R24
+    0019B 0759      CPC	R21,R25
+    0019C F394      BLT	0x018F
+(0239)                                 }
+(0240)                                 for(int i=9; i<81;i++){
+    0019D E049      LDI	R20,0x9
+    0019E E050      LDI	R21,0
+    0019F C009      RJMP	0x01A9
+(0241)                                     DatoSPI = EEPROM_read(i);
+    001A0 018A      MOVW	R16,R20
+    001A1 D715      RCALL	_EEPROM_read
+    001A2 2EA0      MOV	R10,R16
+    001A3 92A0 01AC STS	_DatoSPI,R10
+(0242)                                     SPI_SlaveTransfer(DatoSPI,0);
+    001A5 2722      CLR	R18
+    001A6 D6FF      RCALL	_SPI_SlaveTransfer
+    001A7 5F4F      SUBI	R20,0xFF
+    001A8 4F5F      SBCI	R21,0xFF
+    001A9 E581      LDI	R24,0x51
+    001AA E090      LDI	R25,0
+    001AB 1748      CP	R20,R24
+    001AC 0759      CPC	R21,R25
+    001AD F394      BLT	0x01A0
+(0243)                                 }
+(0244)                                 for(int i=200; i<218;i++){
+    001AE EC48      LDI	R20,0xC8
+    001AF E050      LDI	R21,0
+    001B0 C009      RJMP	0x01BA
+(0245)                                     DatoSPI = EEPROM_read(i);
+    001B1 018A      MOVW	R16,R20
+    001B2 D704      RCALL	_EEPROM_read
+    001B3 2EA0      MOV	R10,R16
+    001B4 92A0 01AC STS	_DatoSPI,R10
+(0246)                                     SPI_SlaveTransfer(DatoSPI,0);
+    001B6 2722      CLR	R18
+    001B7 D6EE      RCALL	_SPI_SlaveTransfer
+    001B8 5F4F      SUBI	R20,0xFF
+    001B9 4F5F      SBCI	R21,0xFF
+    001BA ED8A      LDI	R24,0xDA
+    001BB E090      LDI	R25,0
+    001BC 1748      CP	R20,R24
+    001BD 0759      CPC	R21,R25
+    001BE F394      BLT	0x01B1
+(0247)                                 }
+(0248)                                  //Son 455 datos en total
+(0249)                                 //Haciendo = SPI_SlaveTransfer(idx,0); //Son 455 datos en total
+(0250)                             }
+(0251)                             Haciendo=0;
+    001BF 2422      CLR	R2
+    001C0 9220 0068 STS	_Haciendo,R2
+(0252)                             ss=0;
+    001C2 2433      CLR	R3
+    001C3 9230 0062 STS	_ss+1,R3
+    001C5 9220 0061 STS	_ss,R2
+(0253)                             break;
+    001C7 C003      RJMP	0x01CB
+(0254) 
+(0255)                 default:    Haciendo=0; break;
+    001C8 2422      CLR	R2
+    001C9 9220 0068 STS	_Haciendo,R2
+    001CB CECC      RJMP	0x0098
+    001CC 9622      ADIW	R28,2
+    001CD 9508      RET
+(0256)             }
+(0257)         }
+(0258) 
+(0259) 
+(0260) 
+(0261)   //Esperar comando del serial
+(0262) /*  while((UCSRA&0x80)!=0x80){}; //bandera RXC
+(0263)   caracter=UDR;
+(0264)   if(caracter=='$') //Si comando de inicio...
+(0265)   {
+(0266)    UDR='$'; //comenzar transmision de la cadena
+(0267) 
+(0268)    MideF(0,0,4); //rojo Texp=2ms
+(0269)    while(banConteo!=1){}; //esperar mientras se hace la medición del sensor 0
+(0270)    EnviaHex(conteo);//RGBW[0]; //enviar valor Rojo
+(0271)    MideF(0,1,4); //verde Texp=2ms
+(0272)    while(banConteo!=1){}; //esperar mientras se hace la medición del sensor 0
+(0273)    EnviaHex(conteo);//RGBW[0]; //enviar valor verde
+(0274)    MideF(0,2,4); //azul Texp=2ms
+(0275)    while(banConteo!=1){}; //esperar mientras se hace la medición del sensor 0
+(0276)    EnviaHex(conteo);//RGBW[0]; //enviar valor azul
+(0277)    MideF(0,3,2); //blanco Texp=1ms
+(0278)    while(banConteo!=1){}; //esperar mientras se hace la medición del sensor 0
+(0279)    EnviaHex(conteo);//RGBW[0]; //enviar valor blanco
+(0280) 
+(0281)    delayus(450); //esperar 500us
+(0282)    UDR='$'; //finalizar transmision de la cadena
+(0283)    while((UCSRA&0x40)!=0x40){}; //bandera TXC 1.044ms aprox
+(0284)    UCSRA|=0x40; //apagar bandera TXC
+(0285)     */
+(0286) 
+(0287) 
+(0288)    /*
+(0289)    for(sensor=0;sensor<6;sensor++)
+(0290)    {
+(0291) 	 for(color=0;color<4;color++)
+(0292) 	 {
+(0293) 	  MideF(sensor,color);
+(0294)   	  while(banConteo!=1){}; //esperar mientras se hace la medición del sensor 0
+(0295) 	  RGBW[sensor][color]=conteo;
+(0296) 	  EnviaHex(conteo);
+(0297) 	 }
+(0298)    }
+(0299)    */
+(0300)   //}
+(0301)  }
+(0302) 
+(0303) 
+(0304) }
+(0305) 
+(0306) 
+(0307) 
+(0308) //!********************************************************** FUNCIONES ***************************************************
+(0309) 
+(0310) 
+(0311) //!---------------------------------------------- funcion que mide la frecuencia del pin CH ------------------------------
+(0312) void MideF(int color, int Texp)
+(0313) {
+(0314)  //sleccionar color
+(0315)  //S3=PA1 S2=PA2   Color
+(0316)  //  0      0      Rojo
+(0317)  //  0      1      Blanco
+(0318)  //  1      0      Azul
+(0319)  //  1      1      Verde
+(0320)  switch(color)
+_MideF:
+  Texp                 --> R18
+  color                --> R16
+    001CE 3000      CPI	R16,0
+    001CF 0701      CPC	R16,R17
+    001D0 F069      BEQ	0x01DE
+    001D1 3001      CPI	R16,1
+    001D2 E0E0      LDI	R30,0
+    001D3 071E      CPC	R17,R30
+    001D4 F061      BEQ	0x01E1
+    001D5 3002      CPI	R16,2
+    001D6 E0E0      LDI	R30,0
+    001D7 071E      CPC	R17,R30
+    001D8 F059      BEQ	0x01E4
+    001D9 3003      CPI	R16,3
+    001DA E0E0      LDI	R30,0
+    001DB 071E      CPC	R17,R30
+    001DC F051      BEQ	0x01E7
+    001DD C00B      RJMP	0x01E9
+(0321)  {
+(0322)   case 0: PORTA &= ~0x02; //PA1=0 S3=0 rojo
+    001DE 98D9      CBI	0x1B,1
+(0323)   	   	  PORTA &= ~0x04; //PA2=0 S2=0
+    001DF 98DA      CBI	0x1B,2
+(0324) 		  break;
+    001E0 C008      RJMP	0x01E9
+(0325)   case 1: PORTA |=  0x02; //PA1=1 S3=1 verde
+    001E1 9AD9      SBI	0x1B,1
+(0326)   	   	  PORTA |=  0x04; //PA2=1 S2=1
+    001E2 9ADA      SBI	0x1B,2
+(0327) 		  break;
+    001E3 C005      RJMP	0x01E9
+(0328)   case 2: PORTA |=  0x02; //PA1=1 S3=1 azul
+    001E4 9AD9      SBI	0x1B,1
+(0329)   	   	  PORTA &= ~0x04; //PA2=0 S2=0
+    001E5 98DA      CBI	0x1B,2
+(0330) 	      break;
+    001E6 C002      RJMP	0x01E9
+(0331)   case 3: PORTA &= ~0x02; //PA1=0 S3=0 blanco
+    001E7 98D9      CBI	0x1B,1
+(0332)   	   	  PORTA |=  0x04; //PA2=1 S2=1
+    001E8 9ADA      SBI	0x1B,2
+(0333) 		  break;
+(0334)   default: break;
+(0335)  }
+(0336) 
+(0337)  //inicia la medicion
+(0338)  banConteo=0;
+    001E9 2422      CLR	R2
+    001EA 9220 019E STS	_banConteo,R2
+(0339)  conteo=0;
+    001EC 9220 01AB STS	_conteo,R2
+(0340)  //iniciar valor del conteo timer 1 en 0s
+(0341) 
+(0342)  /*TCCR1B = 0x00; //stop timer1
+(0343)  TCCR0B = 0x00; //stop timer0*/
+(0344) 
+(0345) 
+(0346) //---tiempo de exposicion ------------------------
+(0347)  //Texp=1 500us, Texp=2 1ms, Texp=3 1.5ms, Texp=4 2ms
+(0348) //TCCR1B &= ~((1 << CS12) | (1 << CS11) | (1 << CS10));
+(0349)  //Seleccionar sensor
+(0350)  switch(Texp)
+    001EE 3021      CPI	R18,1
+    001EF E0E0      LDI	R30,0
+    001F0 073E      CPC	R19,R30
+    001F1 F069      BEQ	0x01FF
+    001F2 3022      CPI	R18,2
+    001F3 E0E0      LDI	R30,0
+    001F4 073E      CPC	R19,R30
+    001F5 F081      BEQ	0x0206
+    001F6 3023      CPI	R18,3
+    001F7 E0E0      LDI	R30,0
+    001F8 073E      CPC	R19,R30
+    001F9 F099      BEQ	0x020D
+    001FA 3024      CPI	R18,4
+    001FB E0E0      LDI	R30,0
+    001FC 073E      CPC	R19,R30
+    001FD F0B9      BEQ	0x0215
+    001FE C01D      RJMP	0x021C
+(0351)  {
+(0352)   case 1:   //ventana de tiempo 500us a 20Mhz
+(0353)   	   		OCR1AH = 0x00;  //
+    001FF 2422      CLR	R2
+    00200 BC2B      OUT	0x2B,R2
+(0354)   	   		OCR1AL = 0x27;
+    00201 E287      LDI	R24,0x27
+    00202 BD8A      OUT	0x2A,R24
+(0355)   	   		TCNT1H=0x00;//Reset Timer
+    00203 BC2D      OUT	0x2D,R2
+(0356)             TCNT1L=0x00;//Reset Timer
+    00204 BC2C      OUT	0x2C,R2
+(0357)  			//OCR1B = 0x001F;  //
+(0358)  			//TCNT0 = 0xE1;  //
+(0359) 			break;
+    00205 C016      RJMP	0x021C
+(0360)   case 2:   //ventana de tiempo 1ms a 20Mhz
+(0361)   	   		OCR1AH = 0x00;  //
+    00206 2422      CLR	R2
+    00207 BC2B      OUT	0x2B,R2
+(0362)   	   		OCR1AL = 0x4E;
+    00208 E48E      LDI	R24,0x4E
+    00209 BD8A      OUT	0x2A,R24
+(0363)   	   		TCNT1H=0x00;//Reset Timer
+    0020A BC2D      OUT	0x2D,R2
+(0364)             TCNT1L=0x00;//Reset Timer
+    0020B BC2C      OUT	0x2C,R2
+(0365)  			//OCR1B = 0x003E;  //
+(0366)  			//TCNT0 = 0xC2;  //
+(0367) 			break;
+    0020C C00F      RJMP	0x021C
+(0368)   case 3:   //ventana de tiempo para luz solar a 20Mhz
+(0369)   	   		OCR1A = 0x16;
+    0020D E186      LDI	R24,0x16
+    0020E E090      LDI	R25,0
+    0020F BD9B      OUT	0x2B,R25
+    00210 BD8A      OUT	0x2A,R24
+(0370)   	   		TCNT1H=0x00;//Reset Timer
+    00211 2422      CLR	R2
+    00212 BC2D      OUT	0x2D,R2
+(0371)             TCNT1L=0x00;//Reset Timer
+    00213 BC2C      OUT	0x2C,R2
+(0372)  			//OCR1B = 0x0076;  //
+(0373)  			//TCNT0 = 0xA2;  //
+(0374) 			break;
+    00214 C007      RJMP	0x021C
+(0375)   case 4:   //ventana de tiempo 22ms a 20Mhz
+(0376)   	   		OCR1A = 0x6B7;
+    00215 EB87      LDI	R24,0xB7
+    00216 E096      LDI	R25,6
+    00217 BD9B      OUT	0x2B,R25
+    00218 BD8A      OUT	0x2A,R24
+(0377)   	   		TCNT1H=0x00;//Reset Timer
+    00219 2422      CLR	R2
+    0021A BC2D      OUT	0x2D,R2
+(0378)             TCNT1L=0x00;//Reset Timer
+    0021B BC2C      OUT	0x2C,R2
+(0379)  			//OCR1B = 0x009C;  //
+(0380)  			//TCNT0 = 0x83;  //
+(0381) 			break;
+(0382)   default: break;
+(0383)  }
+(0384) 
+(0385) 
+(0386) TCNT0=0x00;//Reset Counter
+    0021C 2422      CLR	R2
+    0021D BE22      OUT	0x32,R2
+(0387) 
+(0388) TCCR1B |= (1 << CS12); //start timer CLK/256
+    0021E B58E      IN	R24,0x2E
+    0021F 6084      ORI	R24,4
+    00220 BD8E      OUT	0x2E,R24
+(0389) //TCCR1B |= (1 << WGM12);
+(0390) //comenzar conteo Timer0
+(0391) //TCCR0B = 0x07; //start Timer T0 entrada de pulsos
+(0392) TCCR0B |= ((1 << CS12) | (1 << CS11) | (1 << CS10));
+    00221 B783      IN	R24,0x33
+    00222 6087      ORI	R24,7
+    00223 BF83      OUT	0x33,R24
+(0393) SEI(); //re-enable interrupts
+    00224 9478      BSET	7
+    00225 9508      RET
+(0394) }
+_CorrigeSensorColor:
+  Ba                   --> R12
+  Ga                   --> R14
+  Ra                   --> R22
+  deltaRGB             --> R12
+  minRGB               --> R12
+  maxRGB               --> R14
+  Vr                   --> Y,+8
+  Sr                   --> Y,+4
+  Hr                   --> Y,+0
+  Br                   --> R20
+  Gr                   --> Y,+22
+  Rr                   --> R10
+    00226 933A      ST	-Y,R19
+    00227 932A      ST	-Y,R18
+    00228 DA54      RCALL	push_xgsetF0FC
+    00229 0158      MOVW	R10,R16
+    0022A 972C      SBIW	R28,0xC
+    0022B 8D48      LDD	R20,Y+24
+    0022C 8D59      LDD	R21,Y+25
+(0395) 
+(0396) //!--------------------------------------------- Funcion para corregir colores raw -----------------------------------------
+(0397) void CorrigeSensorColor(int Rr, int Gr, int Br)
+(0398) {
+(0399)     int Ra,Ga,Ba;
+(0400)     float Hr,Sr,Vr;
+(0401)     int maxRGB, minRGB, deltaRGB;
+(0402)     //int I,F,P,Q,T;
+(0403) 
+(0404)     // Balance de Negros (offset)
+(0405)     if(BalanceNegros==1)
+    0022D 9180 0069 LDS	R24,_BalanceNegros
+    0022F 3081      CPI	R24,1
+    00230 F561      BNE	0x025D
+(0406)     {
+(0407)         Rr=(Rr*rslm)+(rslb);
+    00231 0185      MOVW	R16,R10
+    00232 DB82      RCALL	int2fp
+    00233 E780      LDI	R24,0x70
+    00234 E090      LDI	R25,0
+    00235 939A      ST	-Y,R25
+    00236 938A      ST	-Y,R24
+    00237 DC76      RCALL	fpmul1
+    00238 E784      LDI	R24,0x74
+    00239 E090      LDI	R25,0
+    0023A 939A      ST	-Y,R25
+    0023B 938A      ST	-Y,R24
+    0023C DB33      RCALL	fpadd1
+    0023D DB45      RCALL	fpint
+    0023E 0158      MOVW	R10,R16
+(0408)         Gr=(Gr*gslm)+(gslb);
+    0023F 890E      LDD	R16,Y+22
+    00240 891F      LDD	R17,Y+23
+    00241 DB73      RCALL	int2fp
+    00242 E788      LDI	R24,0x78
+    00243 E090      LDI	R25,0
+    00244 939A      ST	-Y,R25
+    00245 938A      ST	-Y,R24
+    00246 DC67      RCALL	fpmul1
+    00247 E78C      LDI	R24,0x7C
+    00248 E090      LDI	R25,0
+    00249 939A      ST	-Y,R25
+    0024A 938A      ST	-Y,R24
+    0024B DB24      RCALL	fpadd1
+    0024C DB36      RCALL	fpint
+    0024D 8B1F      STD	Y+23,R17
+    0024E 8B0E      STD	Y+22,R16
+(0409)         Br=(Br*bslm)+(bslb);
+    0024F 018A      MOVW	R16,R20
+    00250 DB64      RCALL	int2fp
+    00251 E880      LDI	R24,0x80
+    00252 E090      LDI	R25,0
+    00253 939A      ST	-Y,R25
+    00254 938A      ST	-Y,R24
+    00255 DC58      RCALL	fpmul1
+    00256 E884      LDI	R24,0x84
+    00257 E090      LDI	R25,0
+    00258 939A      ST	-Y,R25
+    00259 938A      ST	-Y,R24
+    0025A DB15      RCALL	fpadd1
+    0025B DB27      RCALL	fpint
+    0025C 01A8      MOVW	R20,R16
+(0410)     }
+(0411)     // Verificar amplitudes
+(0412)     if(Rr<0)   Rr=0;
+    0025D 01C5      MOVW	R24,R10
+    0025E 3080      CPI	R24,0
+    0025F E0E0      LDI	R30,0
+    00260 079E      CPC	R25,R30
+    00261 F414      BGE	0x0264
+    00262 24AA      CLR	R10
+    00263 24BB      CLR	R11
+(0413)     if(Rr>255) Rr=255;
+    00264 EF8F      LDI	R24,0xFF
+    00265 E090      LDI	R25,0
+    00266 158A      CP	R24,R10
+    00267 059B      CPC	R25,R11
+    00268 F40C      BGE	0x026A
+    00269 015C      MOVW	R10,R24
+(0414)     if(Gr<0)   Gr=0;
+    0026A 898E      LDD	R24,Y+22
+    0026B 899F      LDD	R25,Y+23
+    0026C 3080      CPI	R24,0
+    0026D E0E0      LDI	R30,0
+    0026E 079E      CPC	R25,R30
+    0026F F424      BGE	0x0274
+    00270 2400      CLR	R0
+    00271 2411      CLR	R1
+    00272 8A1F      STD	Y+23,R1
+    00273 8A0E      STD	Y+22,R0
+(0415)     if(Gr>255) Gr=255;
+    00274 EF8F      LDI	R24,0xFF
+    00275 E090      LDI	R25,0
+    00276 880E      LDD	R0,Y+22
+    00277 881F      LDD	R1,Y+23
+    00278 1580      CP	R24,R0
+    00279 0591      CPC	R25,R1
+    0027A F414      BGE	0x027D
+    0027B 8B9F      STD	Y+23,R25
+    0027C 8B8E      STD	Y+22,R24
+(0416)     if(Br<0)   Br=0;
+    0027D 3040      CPI	R20,0
+    0027E E0E0      LDI	R30,0
+    0027F 075E      CPC	R21,R30
+    00280 F414      BGE	0x0283
+    00281 2744      CLR	R20
+    00282 2755      CLR	R21
+(0417)     if(Br>255) Br=255;
+    00283 EF8F      LDI	R24,0xFF
+    00284 E090      LDI	R25,0
+    00285 1784      CP	R24,R20
+    00286 0795      CPC	R25,R21
+    00287 F414      BGE	0x028A
+    00288 EF4F      LDI	R20,0xFF
+    00289 E050      LDI	R21,0
+(0418) 
+(0419)     // Correccion Gama (exponencial)
+(0420)     /*if(CorregirGama==1)
+(0421)     {
+(0422)         Rr=Gama[Rr&0x00FF];
+(0423)         Gr=Gama[Gr&0x00FF];
+(0424)         Br=Gama[Br&0x00FF];
+(0425)     }*/
+(0426) 
+(0427)     // Correccion de Color
+(0428)     //MC es la matriz de correccion de color
+(0429)     if(CorregirColor==1)
+    0028A 9180 006C LDS	R24,_CorregirColor
+    0028C 3081      CPI	R24,1
+    0028D F009      BEQ	0x028F
+    0028E C02F      RJMP	0x02BE
+(0430)     {
+(0431)         Ra=Rr; Ga=Gr; Ba=Br;
+    0028F 01B5      MOVW	R22,R10
+    00290 88EE      LDD	R14,Y+22
+    00291 88FF      LDD	R15,Y+23
+    00292 016A      MOVW	R12,R20
+(0432)         Rr=(Ra*mcrm)+(mcrb);
+    00293 018B      MOVW	R16,R22
+    00294 DB20      RCALL	int2fp
+    00295 E888      LDI	R24,0x88
+    00296 E090      LDI	R25,0
+    00297 939A      ST	-Y,R25
+    00298 938A      ST	-Y,R24
+    00299 DC14      RCALL	fpmul1
+    0029A E88C      LDI	R24,0x8C
+    0029B E090      LDI	R25,0
+    0029C 939A      ST	-Y,R25
+    0029D 938A      ST	-Y,R24
+    0029E DAD1      RCALL	fpadd1
+    0029F DAE3      RCALL	fpint
+    002A0 0158      MOVW	R10,R16
+(0433)         Gr=(Ga*mcgm)+(mcgb);
+    002A1 0187      MOVW	R16,R14
+    002A2 DB12      RCALL	int2fp
+    002A3 E980      LDI	R24,0x90
+    002A4 E090      LDI	R25,0
+    002A5 939A      ST	-Y,R25
+    002A6 938A      ST	-Y,R24
+    002A7 DC06      RCALL	fpmul1
+    002A8 E984      LDI	R24,0x94
+    002A9 E090      LDI	R25,0
+    002AA 939A      ST	-Y,R25
+    002AB 938A      ST	-Y,R24
+    002AC DAC3      RCALL	fpadd1
+    002AD DAD5      RCALL	fpint
+    002AE 8B1F      STD	Y+23,R17
+    002AF 8B0E      STD	Y+22,R16
+(0434)         Br=(Ba*mcbm)+(mcbb);
+    002B0 0186      MOVW	R16,R12
+    002B1 DB03      RCALL	int2fp
+    002B2 E988      LDI	R24,0x98
+    002B3 E090      LDI	R25,0
+    002B4 939A      ST	-Y,R25
+    002B5 938A      ST	-Y,R24
+    002B6 DBF7      RCALL	fpmul1
+    002B7 E98C      LDI	R24,0x9C
+    002B8 E090      LDI	R25,0
+    002B9 939A      ST	-Y,R25
+    002BA 938A      ST	-Y,R24
+    002BB DAB4      RCALL	fpadd1
+    002BC DAC6      RCALL	fpint
+    002BD 01A8      MOVW	R20,R16
+(0435)         /*
+(0436)         Rr = (MC11*Ra + MC12*Ga + MC13*Ba )/255;
+(0437)         Gr = (MC21*Ra + MC22*Ga + MC23*Ba )/255;
+(0438)         Br = (MC31*Ra + MC32*Ga + MC33*Ba )/255;*/
+(0439)     }
+(0440) 
+(0441)     // Verificar amplitudes
+(0442)     if(Rr<0)   Rr=0;
+    002BE 01C5      MOVW	R24,R10
+    002BF 3080      CPI	R24,0
+    002C0 E0E0      LDI	R30,0
+    002C1 079E      CPC	R25,R30
+    002C2 F414      BGE	0x02C5
+    002C3 24AA      CLR	R10
+    002C4 24BB      CLR	R11
+(0443)     if(Rr>255) Rr=255;
+    002C5 EF8F      LDI	R24,0xFF
+    002C6 E090      LDI	R25,0
+    002C7 158A      CP	R24,R10
+    002C8 059B      CPC	R25,R11
+    002C9 F40C      BGE	0x02CB
+    002CA 015C      MOVW	R10,R24
+(0444)     if(Gr<0)   Gr=0;
+    002CB 898E      LDD	R24,Y+22
+    002CC 899F      LDD	R25,Y+23
+    002CD 3080      CPI	R24,0
+    002CE E0E0      LDI	R30,0
+    002CF 079E      CPC	R25,R30
+    002D0 F424      BGE	0x02D5
+    002D1 2400      CLR	R0
+    002D2 2411      CLR	R1
+    002D3 8A1F      STD	Y+23,R1
+    002D4 8A0E      STD	Y+22,R0
+(0445)     if(Gr>255) Gr=255;
+    002D5 EF8F      LDI	R24,0xFF
+    002D6 E090      LDI	R25,0
+    002D7 880E      LDD	R0,Y+22
+    002D8 881F      LDD	R1,Y+23
+    002D9 1580      CP	R24,R0
+    002DA 0591      CPC	R25,R1
+    002DB F414      BGE	0x02DE
+    002DC 8B9F      STD	Y+23,R25
+    002DD 8B8E      STD	Y+22,R24
+(0446)     if(Br<0)   Br=0;
+    002DE 3040      CPI	R20,0
+    002DF E0E0      LDI	R30,0
+    002E0 075E      CPC	R21,R30
+    002E1 F414      BGE	0x02E4
+    002E2 2744      CLR	R20
+    002E3 2755      CLR	R21
+(0447)     if(Br>255) Br=255;
+    002E4 EF8F      LDI	R24,0xFF
+    002E5 E090      LDI	R25,0
+    002E6 1784      CP	R24,R20
+    002E7 0795      CPC	R25,R21
+    002E8 F414      BGE	0x02EB
+    002E9 EF4F      LDI	R20,0xFF
+    002EA E050      LDI	R21,0
+(0448) 
+(0449)     //Conversion HSV
+(0450)     //maxRGB=max(R,G,B);
+(0451)     if(Rr>=Gr) maxRGB=Rr;
+    002EB 880E      LDD	R0,Y+22
+    002EC 881F      LDD	R1,Y+23
+    002ED 14A0      CP	R10,R0
+    002EE 04B1      CPC	R11,R1
+    002EF F014      BLT	0x02F2
+    002F0 0175      MOVW	R14,R10
+    002F1 C002      RJMP	0x02F4
+(0452)     else maxRGB=Gr;
+    002F2 88EE      LDD	R14,Y+22
+    002F3 88FF      LDD	R15,Y+23
+(0453)     if(maxRGB<=Br) maxRGB=Br;
+    002F4 154E      CP	R20,R14
+    002F5 055F      CPC	R21,R15
+    002F6 F00C      BLT	0x02F8
+    002F7 017A      MOVW	R14,R20
+(0454) 
+(0455)     //minRGB=min([R,G,B]);
+(0456)     if(Rr<=Gr) minRGB=Rr;
+    002F8 880E      LDD	R0,Y+22
+    002F9 881F      LDD	R1,Y+23
+    002FA 140A      CP	R0,R10
+    002FB 041B      CPC	R1,R11
+    002FC F014      BLT	0x02FF
+    002FD 0165      MOVW	R12,R10
+    002FE C002      RJMP	0x0301
+(0457)     else minRGB=Gr;
+    002FF 88CE      LDD	R12,Y+22
+    00300 88DF      LDD	R13,Y+23
+(0458)     if(minRGB>=Br) minRGB=Br;
+    00301 16C4      CP	R12,R20
+    00302 06D5      CPC	R13,R21
+    00303 F00C      BLT	0x0305
+    00304 016A      MOVW	R12,R20
+(0459) 
+(0460)     deltaRGB = maxRGB - minRGB;
+    00305 0117      MOVW	R2,R14
+    00306 182C      SUB	R2,R12
+    00307 083D      SBC	R3,R13
+    00308 0161      MOVW	R12,R2
+(0461)     Vr=maxRGB;
+    00309 0187      MOVW	R16,R14
+    0030A DAAA      RCALL	int2fp
+    0030B 8708      STD	Y+8,R16
+    0030C 8719      STD	Y+9,R17
+    0030D 872A      STD	Y+10,R18
+    0030E 873B      STD	Y+11,R19
+(0462) 
+(0463)     if(maxRGB==0)
+    0030F 20EE      TST	R14
+    00310 F489      BNE	0x0322
+    00311 20FF      TST	R15
+    00312 F479      BNE	0x0322
+(0464)     {
+(0465)         Sr=0;
+    00313 E706      LDI	R16,0x76
+    00314 E010      LDI	R17,0
+    00315 D9B4      RCALL	lpm32
+    00316 830C      STD	Y+4,R16
+    00317 831D      STD	Y+5,R17
+    00318 832E      STD	Y+6,R18
+    00319 833F      STD	Y+7,R19
+(0466)         Hr=0;
+    0031A E706      LDI	R16,0x76
+    0031B E010      LDI	R17,0
+    0031C D9AD      RCALL	lpm32
+    0031D 8308      ST	Y,R16
+    0031E 8319      STD	Y+1,R17
+    0031F 832A      STD	Y+2,R18
+    00320 833B      STD	Y+3,R19
+(0467)     }
+    00321 C067      RJMP	0x0389
+(0468)     else
+(0469)     {
+(0470)         Sr=(deltaRGB*255)/maxRGB;
+    00322 EF0F      LDI	R16,0xFF
+    00323 E010      LDI	R17,0
+    00324 0196      MOVW	R18,R12
+    00325 D9B8      RCALL	mpy16s
+    00326 0197      MOVW	R18,R14
+    00327 D915      RCALL	div16s
+    00328 DA8C      RCALL	int2fp
+    00329 830C      STD	Y+4,R16
+    0032A 831D      STD	Y+5,R17
+    0032B 832E      STD	Y+6,R18
+    0032C 833F      STD	Y+7,R19
+(0471)         if(maxRGB==Rr)
+    0032D 14EA      CP	R14,R10
+    0032E 04FB      CPC	R15,R11
+    0032F F4D9      BNE	0x034B
+(0472)         {
+(0473)             if(deltaRGB!=0) Hr=((Gr-Br)*60)/deltaRGB +0;
+    00330 20CC      TST	R12
+    00331 F411      BNE	0x0334
+    00332 20DD      TST	R13
+    00333 F079      BEQ	0x0343
+    00334 892E      LDD	R18,Y+22
+    00335 893F      LDD	R19,Y+23
+    00336 1B24      SUB	R18,R20
+    00337 0B35      SBC	R19,R21
+    00338 E30C      LDI	R16,0x3C
+    00339 E010      LDI	R17,0
+    0033A D9A3      RCALL	mpy16s
+    0033B 0196      MOVW	R18,R12
+    0033C D900      RCALL	div16s
+    0033D DA77      RCALL	int2fp
+    0033E 8308      ST	Y,R16
+    0033F 8319      STD	Y+1,R17
+    00340 832A      STD	Y+2,R18
+    00341 833B      STD	Y+3,R19
+    00342 C046      RJMP	0x0389
+(0474)             else Hr=0;
+    00343 E706      LDI	R16,0x76
+    00344 E010      LDI	R17,0
+    00345 D984      RCALL	lpm32
+    00346 8308      ST	Y,R16
+    00347 8319      STD	Y+1,R17
+    00348 832A      STD	Y+2,R18
+    00349 833B      STD	Y+3,R19
+(0475)         }
+    0034A C03E      RJMP	0x0389
+(0476)         else
+(0477)         {
+(0478)             if(maxRGB==Gr)
+    0034B 880E      LDD	R0,Y+22
+    0034C 881F      LDD	R1,Y+23
+    0034D 14E0      CP	R14,R0
+    0034E 04F1      CPC	R15,R1
+    0034F F4E1      BNE	0x036C
+(0479)             {
+(0480)                 if(deltaRGB!=0) Hr=((Br-Rr)*60)/deltaRGB + 120;
+    00350 20CC      TST	R12
+    00351 F411      BNE	0x0354
+    00352 20DD      TST	R13
+    00353 F081      BEQ	0x0364
+    00354 019A      MOVW	R18,R20
+    00355 192A      SUB	R18,R10
+    00356 093B      SBC	R19,R11
+    00357 E30C      LDI	R16,0x3C
+    00358 E010      LDI	R17,0
+    00359 D984      RCALL	mpy16s
+    0035A 0196      MOVW	R18,R12
+    0035B D8E1      RCALL	div16s
+    0035C 5808      SUBI	R16,0x88
+    0035D 4F1F      SBCI	R17,0xFF
+    0035E DA56      RCALL	int2fp
+    0035F 8308      ST	Y,R16
+    00360 8319      STD	Y+1,R17
+    00361 832A      STD	Y+2,R18
+    00362 833B      STD	Y+3,R19
+    00363 C025      RJMP	0x0389
+(0481)                 else Hr=0;
+    00364 E706      LDI	R16,0x76
+    00365 E010      LDI	R17,0
+    00366 D963      RCALL	lpm32
+    00367 8308      ST	Y,R16
+    00368 8319      STD	Y+1,R17
+    00369 832A      STD	Y+2,R18
+    0036A 833B      STD	Y+3,R19
+(0482)             }
+    0036B C01D      RJMP	0x0389
+(0483)             else
+(0484)             {
+(0485)                 if(deltaRGB!=0) Hr=((Rr-Gr)*60)/deltaRGB + 240;
+    0036C 20CC      TST	R12
+    0036D F411      BNE	0x0370
+    0036E 20DD      TST	R13
+    0036F F091      BEQ	0x0382
+    00370 0195      MOVW	R18,R10
+    00371 880E      LDD	R0,Y+22
+    00372 881F      LDD	R1,Y+23
+    00373 1920      SUB	R18,R0
+    00374 0931      SBC	R19,R1
+    00375 E30C      LDI	R16,0x3C
+    00376 E010      LDI	R17,0
+    00377 D966      RCALL	mpy16s
+    00378 0196      MOVW	R18,R12
+    00379 D8C3      RCALL	div16s
+    0037A 5100      SUBI	R16,0x10
+    0037B 4F1F      SBCI	R17,0xFF
+    0037C DA38      RCALL	int2fp
+    0037D 8308      ST	Y,R16
+    0037E 8319      STD	Y+1,R17
+    0037F 832A      STD	Y+2,R18
+    00380 833B      STD	Y+3,R19
+    00381 C007      RJMP	0x0389
+(0486)                 else Hr=0;
+    00382 E706      LDI	R16,0x76
+    00383 E010      LDI	R17,0
+    00384 D945      RCALL	lpm32
+    00385 8308      ST	Y,R16
+    00386 8319      STD	Y+1,R17
+    00387 832A      STD	Y+2,R18
+    00388 833B      STD	Y+3,R19
+(0487)             }
+(0488)         }
+(0489)     }
+(0490)     if(Hr<0) Hr=Hr+360;
+    00389 8028      LD	R2,Y
+    0038A 8039      LDD	R3,Y+1
+    0038B 804A      LDD	R4,Y+2
+    0038C 805B      LDD	R5,Y+3
+    0038D E706      LDI	R16,0x76
+    0038E E010      LDI	R17,0
+    0038F D93A      RCALL	lpm32
+    00390 933A      ST	-Y,R19
+    00391 932A      ST	-Y,R18
+    00392 931A      ST	-Y,R17
+    00393 930A      ST	-Y,R16
+    00394 0181      MOVW	R16,R2
+    00395 0192      MOVW	R18,R4
+    00396 DBC0      RCALL	fpcmp2
+    00397 F494      BGE	0x03AA
+    00398 8028      LD	R2,Y
+    00399 8039      LDD	R3,Y+1
+    0039A 804A      LDD	R4,Y+2
+    0039B 805B      LDD	R5,Y+3
+    0039C E702      LDI	R16,0x72
+    0039D E010      LDI	R17,0
+    0039E D92B      RCALL	lpm32
+    0039F 933A      ST	-Y,R19
+    003A0 932A      ST	-Y,R18
+    003A1 931A      ST	-Y,R17
+    003A2 930A      ST	-Y,R16
+    003A3 0181      MOVW	R16,R2
+    003A4 0192      MOVW	R18,R4
+    003A5 D9D3      RCALL	fpadd2
+    003A6 8308      ST	Y,R16
+    003A7 8319      STD	Y+1,R17
+    003A8 832A      STD	Y+2,R18
+    003A9 833B      STD	Y+3,R19
+(0491) 
+(0492)     if(Hr==0 && Sr==0 && Vr==0){
+    003AA 8028      LD	R2,Y
+    003AB 8039      LDD	R3,Y+1
+    003AC 804A      LDD	R4,Y+2
+    003AD 805B      LDD	R5,Y+3
+    003AE E706      LDI	R16,0x76
+    003AF E010      LDI	R17,0
+    003B0 D919      RCALL	lpm32
+    003B1 933A      ST	-Y,R19
+    003B2 932A      ST	-Y,R18
+    003B3 931A      ST	-Y,R17
+    003B4 930A      ST	-Y,R16
+    003B5 0181      MOVW	R16,R2
+    003B6 0192      MOVW	R18,R4
+    003B7 DB9F      RCALL	fpcmp2
+    003B8 F509      BNE	0x03DA
+    003B9 802C      LDD	R2,Y+4
+    003BA 803D      LDD	R3,Y+5
+    003BB 804E      LDD	R4,Y+6
+    003BC 805F      LDD	R5,Y+7
+    003BD E706      LDI	R16,0x76
+    003BE E010      LDI	R17,0
+    003BF D90A      RCALL	lpm32
+    003C0 933A      ST	-Y,R19
+    003C1 932A      ST	-Y,R18
+    003C2 931A      ST	-Y,R17
+    003C3 930A      ST	-Y,R16
+    003C4 0181      MOVW	R16,R2
+    003C5 0192      MOVW	R18,R4
+    003C6 DB90      RCALL	fpcmp2
+    003C7 F491      BNE	0x03DA
+    003C8 8428      LDD	R2,Y+8
+    003C9 8439      LDD	R3,Y+9
+    003CA 844A      LDD	R4,Y+10
+    003CB 845B      LDD	R5,Y+11
+    003CC E706      LDI	R16,0x76
+    003CD E010      LDI	R17,0
+    003CE D8FB      RCALL	lpm32
+    003CF 933A      ST	-Y,R19
+    003D0 932A      ST	-Y,R18
+    003D1 931A      ST	-Y,R17
+    003D2 930A      ST	-Y,R16
+    003D3 0181      MOVW	R16,R2
+    003D4 0192      MOVW	R18,R4
+    003D5 DB81      RCALL	fpcmp2
+    003D6 F419      BNE	0x03DA
+(0493)         CorregirHSV=0;
+    003D7 2422      CLR	R2
+    003D8 9220 006D STS	_CorregirHSV,R2
+(0494)     }
+(0495)     //Correcion de H_SV
+(0496)     if(CorregirHSV==1)
+    003DA 9180 006D LDS	R24,_CorregirHSV
+    003DC 3081      CPI	R24,1
+    003DD F009      BEQ	0x03DF
+    003DE C118      RJMP	0x04F7
+(0497)     {
+(0498)         Ha=Hr/360; Sa=Sr/255; Va=Vr/255;
+    003DF 8028      LD	R2,Y
+    003E0 8039      LDD	R3,Y+1
+    003E1 804A      LDD	R4,Y+2
+    003E2 805B      LDD	R5,Y+3
+    003E3 E702      LDI	R16,0x72
+    003E4 E010      LDI	R17,0
+    003E5 D8E4      RCALL	lpm32
+    003E6 933A      ST	-Y,R19
+    003E7 932A      ST	-Y,R18
+    003E8 931A      ST	-Y,R17
+    003E9 930A      ST	-Y,R16
+    003EA 0181      MOVW	R16,R2
+    003EB 0192      MOVW	R18,R4
+    003EC D9F1      RCALL	fpdiv2
+    003ED 9310 019A STS	_Ha+1,R17
+    003EF 9300 0199 STS	_Ha,R16
+    003F1 9330 019C STS	_Ha+3,R19
+    003F3 9320 019B STS	_Ha+2,R18
+    003F5 802C      LDD	R2,Y+4
+    003F6 803D      LDD	R3,Y+5
+    003F7 804E      LDD	R4,Y+6
+    003F8 805F      LDD	R5,Y+7
+    003F9 E60E      LDI	R16,0x6E
+    003FA E010      LDI	R17,0
+    003FB D8CE      RCALL	lpm32
+    003FC 933A      ST	-Y,R19
+    003FD 932A      ST	-Y,R18
+    003FE 931A      ST	-Y,R17
+    003FF 930A      ST	-Y,R16
+    00400 0181      MOVW	R16,R2
+    00401 0192      MOVW	R18,R4
+    00402 D9DB      RCALL	fpdiv2
+    00403 9310 0196 STS	_Sa+1,R17
+    00405 9300 0195 STS	_Sa,R16
+    00407 9330 0198 STS	_Sa+3,R19
+    00409 9320 0197 STS	_Sa+2,R18
+    0040B 8428      LDD	R2,Y+8
+    0040C 8439      LDD	R3,Y+9
+    0040D 844A      LDD	R4,Y+10
+    0040E 845B      LDD	R5,Y+11
+    0040F E60E      LDI	R16,0x6E
+    00410 E010      LDI	R17,0
+    00411 D8B8      RCALL	lpm32
+    00412 933A      ST	-Y,R19
+    00413 932A      ST	-Y,R18
+    00414 931A      ST	-Y,R17
+    00415 930A      ST	-Y,R16
+    00416 0181      MOVW	R16,R2
+    00417 0192      MOVW	R18,R4
+    00418 D9C5      RCALL	fpdiv2
+    00419 9310 0192 STS	_Va+1,R17
+    0041B 9300 0191 STS	_Va,R16
+    0041D 9330 0194 STS	_Va+3,R19
+    0041F 9320 0193 STS	_Va+2,R18
+(0499)         Hr = (Ha*mchm)+(mchb);
+    00421 9120 019B LDS	R18,_Ha+2
+    00423 9130 019C LDS	R19,_Ha+3
+    00425 9100 0199 LDS	R16,_Ha
+    00427 9110 019A LDS	R17,_Ha+1
+    00429 EA80      LDI	R24,0xA0
+    0042A E090      LDI	R25,0
+    0042B 939A      ST	-Y,R25
+    0042C 938A      ST	-Y,R24
+    0042D DA80      RCALL	fpmul1
+    0042E EA84      LDI	R24,0xA4
+    0042F E090      LDI	R25,0
+    00430 939A      ST	-Y,R25
+    00431 938A      ST	-Y,R24
+    00432 D93D      RCALL	fpadd1
+    00433 8308      ST	Y,R16
+    00434 8319      STD	Y+1,R17
+    00435 832A      STD	Y+2,R18
+    00436 833B      STD	Y+3,R19
+(0500)         Sr = (Sa*mcsm)+(mcsb);
+    00437 9120 0197 LDS	R18,_Sa+2
+    00439 9130 0198 LDS	R19,_Sa+3
+    0043B 9100 0195 LDS	R16,_Sa
+    0043D 9110 0196 LDS	R17,_Sa+1
+    0043F EA88      LDI	R24,0xA8
+    00440 E090      LDI	R25,0
+    00441 939A      ST	-Y,R25
+    00442 938A      ST	-Y,R24
+    00443 DA6A      RCALL	fpmul1
+    00444 EA8C      LDI	R24,0xAC
+    00445 E090      LDI	R25,0
+    00446 939A      ST	-Y,R25
+    00447 938A      ST	-Y,R24
+    00448 D927      RCALL	fpadd1
+    00449 830C      STD	Y+4,R16
+    0044A 831D      STD	Y+5,R17
+    0044B 832E      STD	Y+6,R18
+    0044C 833F      STD	Y+7,R19
+(0501)         Vr = (Va*mcvm)+(mcvb);
+    0044D 9120 0193 LDS	R18,_Va+2
+    0044F 9130 0194 LDS	R19,_Va+3
+    00451 9100 0191 LDS	R16,_Va
+    00453 9110 0192 LDS	R17,_Va+1
+    00455 EB80      LDI	R24,0xB0
+    00456 E090      LDI	R25,0
+    00457 939A      ST	-Y,R25
+    00458 938A      ST	-Y,R24
+    00459 DA54      RCALL	fpmul1
+    0045A EB84      LDI	R24,0xB4
+    0045B E090      LDI	R25,0
+    0045C 939A      ST	-Y,R25
+    0045D 938A      ST	-Y,R24
+    0045E D911      RCALL	fpadd1
+    0045F 8708      STD	Y+8,R16
+    00460 8719      STD	Y+9,R17
+    00461 872A      STD	Y+10,R18
+    00462 873B      STD	Y+11,R19
+(0502)         if(Hr<0)     Hr=0;
+    00463 8028      LD	R2,Y
+    00464 8039      LDD	R3,Y+1
+    00465 804A      LDD	R4,Y+2
+    00466 805B      LDD	R5,Y+3
+    00467 E706      LDI	R16,0x76
+    00468 E010      LDI	R17,0
+    00469 D860      RCALL	lpm32
+    0046A 933A      ST	-Y,R19
+    0046B 932A      ST	-Y,R18
+    0046C 931A      ST	-Y,R17
+    0046D 930A      ST	-Y,R16
+    0046E 0181      MOVW	R16,R2
+    0046F 0192      MOVW	R18,R4
+    00470 DAE6      RCALL	fpcmp2
+    00471 F43C      BGE	0x0479
+    00472 E706      LDI	R16,0x76
+    00473 E010      LDI	R17,0
+    00474 D855      RCALL	lpm32
+    00475 8308      ST	Y,R16
+    00476 8319      STD	Y+1,R17
+    00477 832A      STD	Y+2,R18
+    00478 833B      STD	Y+3,R19
+(0503)         if(Hr>1)   Hr=1;
+    00479 01CE      MOVW	R24,R28
+    0047A E60A      LDI	R16,0x6A
+    0047B E010      LDI	R17,0
+    0047C D84D      RCALL	lpm32
+    0047D 939A      ST	-Y,R25
+    0047E 938A      ST	-Y,R24
+    0047F DACD      RCALL	fpcmp1
+    00480 F43C      BGE	0x0488
+    00481 E60A      LDI	R16,0x6A
+    00482 E010      LDI	R17,0
+    00483 D846      RCALL	lpm32
+    00484 8308      ST	Y,R16
+    00485 8319      STD	Y+1,R17
+    00486 832A      STD	Y+2,R18
+    00487 833B      STD	Y+3,R19
+(0504)         if(Sr<0)     Sr=0;
+    00488 802C      LDD	R2,Y+4
+    00489 803D      LDD	R3,Y+5
+    0048A 804E      LDD	R4,Y+6
+    0048B 805F      LDD	R5,Y+7
+    0048C E706      LDI	R16,0x76
+    0048D E010      LDI	R17,0
+    0048E D83B      RCALL	lpm32
+    0048F 933A      ST	-Y,R19
+    00490 932A      ST	-Y,R18
+    00491 931A      ST	-Y,R17
+    00492 930A      ST	-Y,R16
+    00493 0181      MOVW	R16,R2
+    00494 0192      MOVW	R18,R4
+    00495 DAC1      RCALL	fpcmp2
+    00496 F43C      BGE	0x049E
+    00497 E706      LDI	R16,0x76
+    00498 E010      LDI	R17,0
+    00499 D830      RCALL	lpm32
+    0049A 830C      STD	Y+4,R16
+    0049B 831D      STD	Y+5,R17
+    0049C 832E      STD	Y+6,R18
+    0049D 833F      STD	Y+7,R19
+(0505)         if(Sr>1)   Sr=1;
+    0049E 01CE      MOVW	R24,R28
+    0049F 9604      ADIW	R24,4
+    004A0 E60A      LDI	R16,0x6A
+    004A1 E010      LDI	R17,0
+    004A2 D827      RCALL	lpm32
+    004A3 939A      ST	-Y,R25
+    004A4 938A      ST	-Y,R24
+    004A5 DAA7      RCALL	fpcmp1
+    004A6 F43C      BGE	0x04AE
+    004A7 E60A      LDI	R16,0x6A
+    004A8 E010      LDI	R17,0
+    004A9 D820      RCALL	lpm32
+    004AA 830C      STD	Y+4,R16
+    004AB 831D      STD	Y+5,R17
+    004AC 832E      STD	Y+6,R18
+    004AD 833F      STD	Y+7,R19
+(0506)         if(Vr<0)     Vr=0;
+    004AE 8428      LDD	R2,Y+8
+    004AF 8439      LDD	R3,Y+9
+    004B0 844A      LDD	R4,Y+10
+    004B1 845B      LDD	R5,Y+11
+    004B2 E706      LDI	R16,0x76
+    004B3 E010      LDI	R17,0
+    004B4 D815      RCALL	lpm32
+    004B5 933A      ST	-Y,R19
+    004B6 932A      ST	-Y,R18
+    004B7 931A      ST	-Y,R17
+    004B8 930A      ST	-Y,R16
+    004B9 0181      MOVW	R16,R2
+    004BA 0192      MOVW	R18,R4
+    004BB DA9B      RCALL	fpcmp2
+    004BC F43C      BGE	0x04C4
+    004BD E706      LDI	R16,0x76
+    004BE E010      LDI	R17,0
+    004BF D80A      RCALL	lpm32
+    004C0 8708      STD	Y+8,R16
+    004C1 8719      STD	Y+9,R17
+    004C2 872A      STD	Y+10,R18
+    004C3 873B      STD	Y+11,R19
+(0507)         if(Vr>1)   Vr=1;
+    004C4 01CE      MOVW	R24,R28
+    004C5 9608      ADIW	R24,0x8
+    004C6 E60A      LDI	R16,0x6A
+    004C7 E010      LDI	R17,0
+    004C8 D801      RCALL	lpm32
+    004C9 939A      ST	-Y,R25
+    004CA 938A      ST	-Y,R24
+    004CB DA81      RCALL	fpcmp1
+    004CC F43C      BGE	0x04D4
+    004CD E60A      LDI	R16,0x6A
+    004CE E010      LDI	R17,0
+    004CF D7FA      RCALL	lpm32
+    004D0 8708      STD	Y+8,R16
+    004D1 8719      STD	Y+9,R17
+    004D2 872A      STD	Y+10,R18
+    004D3 873B      STD	Y+11,R19
+(0508) 
+(0509)         Hr=Hr*360;
+    004D4 E702      LDI	R16,0x72
+    004D5 E010      LDI	R17,0
+    004D6 D7F3      RCALL	lpm32
+    004D7 01CE      MOVW	R24,R28
+    004D8 939A      ST	-Y,R25
+    004D9 938A      ST	-Y,R24
+    004DA D9D3      RCALL	fpmul1
+    004DB 8308      ST	Y,R16
+    004DC 8319      STD	Y+1,R17
+    004DD 832A      STD	Y+2,R18
+    004DE 833B      STD	Y+3,R19
+(0510)         Sr=Sr*255;
+    004DF E60E      LDI	R16,0x6E
+    004E0 E010      LDI	R17,0
+    004E1 D7E8      RCALL	lpm32
+    004E2 01CE      MOVW	R24,R28
+    004E3 9604      ADIW	R24,4
+    004E4 939A      ST	-Y,R25
+    004E5 938A      ST	-Y,R24
+    004E6 D9C7      RCALL	fpmul1
+    004E7 830C      STD	Y+4,R16
+    004E8 831D      STD	Y+5,R17
+    004E9 832E      STD	Y+6,R18
+    004EA 833F      STD	Y+7,R19
+(0511)         Vr=Vr*255;
+    004EB E60E      LDI	R16,0x6E
+    004EC E010      LDI	R17,0
+    004ED D7DC      RCALL	lpm32
+    004EE 01CE      MOVW	R24,R28
+    004EF 9608      ADIW	R24,0x8
+    004F0 939A      ST	-Y,R25
+    004F1 938A      ST	-Y,R24
+    004F2 D9BB      RCALL	fpmul1
+    004F3 8708      STD	Y+8,R16
+    004F4 8719      STD	Y+9,R17
+    004F5 872A      STD	Y+10,R18
+    004F6 873B      STD	Y+11,R19
+(0512)     }
+(0513) 
+(0514)     // Verificar amplitudes
+(0515)     if(Hr<0)     Hr=0;
+    004F7 8028      LD	R2,Y
+    004F8 8039      LDD	R3,Y+1
+    004F9 804A      LDD	R4,Y+2
+    004FA 805B      LDD	R5,Y+3
+    004FB E706      LDI	R16,0x76
+    004FC E010      LDI	R17,0
+    004FD D7CC      RCALL	lpm32
+    004FE 933A      ST	-Y,R19
+    004FF 932A      ST	-Y,R18
+    00500 931A      ST	-Y,R17
+    00501 930A      ST	-Y,R16
+    00502 0181      MOVW	R16,R2
+    00503 0192      MOVW	R18,R4
+    00504 DA52      RCALL	fpcmp2
+    00505 F43C      BGE	0x050D
+    00506 E706      LDI	R16,0x76
+    00507 E010      LDI	R17,0
+    00508 D7C1      RCALL	lpm32
+    00509 8308      ST	Y,R16
+    0050A 8319      STD	Y+1,R17
+    0050B 832A      STD	Y+2,R18
+    0050C 833B      STD	Y+3,R19
+(0516)     if(Hr>360)   Hr=360;
+    0050D 01CE      MOVW	R24,R28
+    0050E E702      LDI	R16,0x72
+    0050F E010      LDI	R17,0
+    00510 D7B9      RCALL	lpm32
+    00511 939A      ST	-Y,R25
+    00512 938A      ST	-Y,R24
+    00513 DA39      RCALL	fpcmp1
+    00514 F43C      BGE	0x051C
+    00515 E702      LDI	R16,0x72
+    00516 E010      LDI	R17,0
+    00517 D7B2      RCALL	lpm32
+    00518 8308      ST	Y,R16
+    00519 8319      STD	Y+1,R17
+    0051A 832A      STD	Y+2,R18
+    0051B 833B      STD	Y+3,R19
+(0517)     if(Sr<0)     Sr=0;
+    0051C 802C      LDD	R2,Y+4
+    0051D 803D      LDD	R3,Y+5
+    0051E 804E      LDD	R4,Y+6
+    0051F 805F      LDD	R5,Y+7
+    00520 E706      LDI	R16,0x76
+    00521 E010      LDI	R17,0
+    00522 D7A7      RCALL	lpm32
+    00523 933A      ST	-Y,R19
+    00524 932A      ST	-Y,R18
+    00525 931A      ST	-Y,R17
+    00526 930A      ST	-Y,R16
+    00527 0181      MOVW	R16,R2
+    00528 0192      MOVW	R18,R4
+    00529 DA2D      RCALL	fpcmp2
+    0052A F43C      BGE	0x0532
+    0052B E706      LDI	R16,0x76
+    0052C E010      LDI	R17,0
+    0052D D79C      RCALL	lpm32
+    0052E 830C      STD	Y+4,R16
+    0052F 831D      STD	Y+5,R17
+    00530 832E      STD	Y+6,R18
+    00531 833F      STD	Y+7,R19
+(0518)     if(Sr>255)   Sr=255;
+    00532 01CE      MOVW	R24,R28
+    00533 9604      ADIW	R24,4
+    00534 E60E      LDI	R16,0x6E
+    00535 E010      LDI	R17,0
+    00536 D793      RCALL	lpm32
+    00537 939A      ST	-Y,R25
+    00538 938A      ST	-Y,R24
+    00539 DA13      RCALL	fpcmp1
+    0053A F43C      BGE	0x0542
+    0053B E60E      LDI	R16,0x6E
+    0053C E010      LDI	R17,0
+    0053D D78C      RCALL	lpm32
+    0053E 830C      STD	Y+4,R16
+    0053F 831D      STD	Y+5,R17
+    00540 832E      STD	Y+6,R18
+    00541 833F      STD	Y+7,R19
+(0519)     if(Vr<0)     Vr=0;
+    00542 8428      LDD	R2,Y+8
+    00543 8439      LDD	R3,Y+9
+    00544 844A      LDD	R4,Y+10
+    00545 845B      LDD	R5,Y+11
+    00546 E706      LDI	R16,0x76
+    00547 E010      LDI	R17,0
+    00548 D781      RCALL	lpm32
+    00549 933A      ST	-Y,R19
+    0054A 932A      ST	-Y,R18
+    0054B 931A      ST	-Y,R17
+    0054C 930A      ST	-Y,R16
+    0054D 0181      MOVW	R16,R2
+    0054E 0192      MOVW	R18,R4
+    0054F DA07      RCALL	fpcmp2
+    00550 F43C      BGE	0x0558
+    00551 E706      LDI	R16,0x76
+    00552 E010      LDI	R17,0
+    00553 D776      RCALL	lpm32
+    00554 8708      STD	Y+8,R16
+    00555 8719      STD	Y+9,R17
+    00556 872A      STD	Y+10,R18
+    00557 873B      STD	Y+11,R19
+(0520)     if(Vr>255)   Vr=255;
+    00558 01CE      MOVW	R24,R28
+    00559 9608      ADIW	R24,0x8
+    0055A E60E      LDI	R16,0x6E
+    0055B E010      LDI	R17,0
+    0055C D76D      RCALL	lpm32
+    0055D 939A      ST	-Y,R25
+    0055E 938A      ST	-Y,R24
+    0055F D9ED      RCALL	fpcmp1
+    00560 F43C      BGE	0x0568
+    00561 E60E      LDI	R16,0x6E
+    00562 E010      LDI	R17,0
+    00563 D766      RCALL	lpm32
+    00564 8708      STD	Y+8,R16
+    00565 8719      STD	Y+9,R17
+    00566 872A      STD	Y+10,R18
+    00567 873B      STD	Y+11,R19
+(0521) 
+(0522) 
+(0523)     //%SVP=SPa.*VPa;
+(0524)     //%SVC=SCa.*VCa;
+(0525) 
+(0526)     // Obtener RGB a partir de HSV corregido
+(0527)     /*if(ObtenerRGBdeHSV==1)
+(0528)     {
+(0529)         if(Sr>umbralGris) //umbral de croma/BW
+(0530)         {
+(0531)             I=floor(Hr/60); //Parte entera, sector 0 - 5
+(0532)             Ha=(Hr*1000/60);
+(0533)             F=Ha-I*1000;
+(0534) 
+(0535)             P=Vr*(255-Sr)/255;
+(0536)             Q=Vr*(255*1000-Sr*F)/(255*1000);
+(0537)             T=Vr*(255*1000-Sr*(1000-F))/(255*1000);
+(0538)             switch(I)
+(0539)             {
+(0540)                 case 0:
+(0541)                     Rr=Vr; Gr=T; Br=P;
+(0542)                     break;
+(0543)                 case 1:
+(0544)                     Rr=Q; Gr=Vr; Br=P;
+(0545)                     break;
+(0546)                 case 2:
+(0547)                     Rr=P; Gr=Vr; Br=T;
+(0548)                     break;
+(0549)                 case 3:
+(0550)                     Rr=P; Gr=Q; Br=Vr;
+(0551)                     break;
+(0552)                 case 4:
+(0553)                     Rr=T; Gr=P; Br=Vr;
+(0554)                     break;
+(0555)                 case 5:
+(0556)                     Rr=Vr; Gr=P; Br=Q;
+(0557)                     break;
+(0558)                 default:
+(0559)                     break;
+(0560)             }
+(0561)         }
+(0562)         else
+(0563)             Rr=Vr; Gr=Vr; Br=Vr;           //Escala de grises
+(0564)     }
+(0565) 
+(0566)     // Verificar amplitudes
+(0567)     if(Rr<0)   Rr=0;
+(0568)     if(Rr>255) Rr=255;
+(0569)     if(Gr<0)   Gr=0;
+(0570)     if(Gr>255) Gr=255;
+(0571)     if(Br<0)   Br=0;
+(0572)     if(Br>255) Br=255;*/
+(0573) 
+(0574)     R=Rr; G=Gr; B=Br;
+    00568 92A0 00D0 STS	_R,R10
+    0056A 880E      LDD	R0,Y+22
+    0056B 881F      LDD	R1,Y+23
+    0056C 9200 00CF STS	_G,R0
+    0056E 9340 00CE STS	_B,R20
+(0575)     H=Hr; S=Sr; V=Vr;
+    00570 8108      LD	R16,Y
+    00571 8119      LDD	R17,Y+1
+    00572 812A      LDD	R18,Y+2
+    00573 813B      LDD	R19,Y+3
+    00574 D80E      RCALL	fpint
+    00575 9310 00CB STS	_H+1,R17
+    00577 9300 00CA STS	_H,R16
+    00579 810C      LDD	R16,Y+4
+    0057A 811D      LDD	R17,Y+5
+    0057B 812E      LDD	R18,Y+6
+    0057C 813F      LDD	R19,Y+7
+    0057D D805      RCALL	fpint
+    0057E 9300 00CD STS	_S,R16
+    00580 8508      LDD	R16,Y+8
+    00581 8519      LDD	R17,Y+9
+    00582 852A      LDD	R18,Y+10
+    00583 853B      LDD	R19,Y+11
+    00584 D7FE      RCALL	fpint
+    00585 9300 00CC STS	_V,R16
+    00587 962C      ADIW	R28,0xC
+    00588 D6E9      RCALL	pop_xgsetF0FC
+    00589 9622      ADIW	R28,2
+    0058A 9508      RET
+(0576) }
+_CargaParametros:
+  i                    --> R20
+  i                    --> R20
+  i                    --> R20
+  i                    --> R20
+  i                    --> R20
+  i                    --> R20
+  i                    --> R20
+  i                    --> R20
+  i                    --> R20
+  i                    --> R20
+  i                    --> R20
+  i                    --> R20
+  i                    --> R20
+  i                    --> R20
+  i                    --> R20
+  i                    --> R20
+  i                    --> R20
+  i                    --> R20
+    0058B D6FC      RCALL	push_xgset300C
+    0058C 9722      SBIW	R28,2
+(0577) 
+(0578) 
+(0579) 
+(0580) //!------------------------------------- Cargar todos los parametros de correccion desde la EEPROM -------------------------
+(0581) void CargaParametros(void)
+(0582) {
+(0583)     //Comandos de correccion de color
+(0584)     BalanceNegros=EEPROM_read(1);      //EEPROM[1]
+    0058D E001      LDI	R16,1
+    0058E E010      LDI	R17,0
+    0058F D327      RCALL	_EEPROM_read
+    00590 9300 0069 STS	_BalanceNegros,R16
+(0585)     BalanceBlancos=EEPROM_read(2);     //EEPROM[2]
+    00592 E002      LDI	R16,2
+    00593 E010      LDI	R17,0
+    00594 D322      RCALL	_EEPROM_read
+    00595 9300 006A STS	_BalanceBlancos,R16
+(0586)     CorregirGama=EEPROM_read(3);       //EEPROM[3]
+    00597 E003      LDI	R16,3
+    00598 E010      LDI	R17,0
+    00599 D31D      RCALL	_EEPROM_read
+    0059A 2EA0      MOV	R10,R16
+    0059B 92A0 006B STS	_CorregirGama,R10
+(0587)     CorregirColor=EEPROM_read(4);      //EEPROM[4]
+    0059D E004      LDI	R16,4
+    0059E E010      LDI	R17,0
+    0059F D317      RCALL	_EEPROM_read
+    005A0 2EA0      MOV	R10,R16
+    005A1 92A0 006C STS	_CorregirColor,R10
+(0588)     CorregirHSV=EEPROM_read(5);        //EEPROM[5]
+    005A3 E005      LDI	R16,5
+    005A4 E010      LDI	R17,0
+    005A5 D311      RCALL	_EEPROM_read
+    005A6 2EA0      MOV	R10,R16
+    005A7 92A0 006D STS	_CorregirHSV,R10
+(0589)     ObtenerRGBdeHSV=EEPROM_read(6);    //EEPROM[6]
+    005A9 E006      LDI	R16,6
+    005AA E010      LDI	R17,0
+    005AB D30B      RCALL	_EEPROM_read
+    005AC 2EA0      MOV	R10,R16
+    005AD 92A0 006E STS	_ObtenerRGBdeHSV,R10
+(0590) 
+(0591)     //Parametros de correccion de color
+(0592)     for(int i=0;i<4;i++){
+    005AF 2744      CLR	R20
+    005B0 2755      CLR	R21
+    005B1 C00D      RJMP	0x05BF
+(0593)         storage[i]=EEPROM_read(9+i);
+    005B2 018A      MOVW	R16,R20
+    005B3 5F07      SUBI	R16,0xF7
+    005B4 4F1F      SBCI	R17,0xFF
+    005B5 D301      RCALL	_EEPROM_read
+    005B6 2EA0      MOV	R10,R16
+    005B7 EE89      LDI	R24,0xE9
+    005B8 E090      LDI	R25,0
+    005B9 01FA      MOVW	R30,R20
+    005BA 0FE8      ADD	R30,R24
+    005BB 1FF9      ADC	R31,R25
+    005BC 82A0      ST	Z,R10
+    005BD 5F4F      SUBI	R20,0xFF
+    005BE 4F5F      SBCI	R21,0xFF
+    005BF E084      LDI	R24,4
+    005C0 E090      LDI	R25,0
+    005C1 1748      CP	R20,R24
+    005C2 0759      CPC	R21,R25
+    005C3 F374      BLT	0x05B2
+(0594)     }
+(0595) 	memcpy(&rslb,&storage,4);
+    005C4 8399      STD	Y+1,R25
+    005C5 8388      ST	Y,R24
+    005C6 EE29      LDI	R18,0xE9
+    005C7 E030      LDI	R19,0
+    005C8 E704      LDI	R16,0x74
+    005C9 E010      LDI	R17,0
+    005CA D65B      RCALL	<LIBRARY>|_memcpy
+(0596)     for(int i=0;i<4;i++){
+    005CB 2744      CLR	R20
+    005CC 2755      CLR	R21
+    005CD C00D      RJMP	0x05DB
+(0597)         storage[i]=EEPROM_read(13+i);
+    005CE 018A      MOVW	R16,R20
+    005CF 5F03      SUBI	R16,0xF3
+    005D0 4F1F      SBCI	R17,0xFF
+    005D1 D2E5      RCALL	_EEPROM_read
+    005D2 2EA0      MOV	R10,R16
+    005D3 EE89      LDI	R24,0xE9
+    005D4 E090      LDI	R25,0
+    005D5 01FA      MOVW	R30,R20
+    005D6 0FE8      ADD	R30,R24
+    005D7 1FF9      ADC	R31,R25
+    005D8 82A0      ST	Z,R10
+    005D9 5F4F      SUBI	R20,0xFF
+    005DA 4F5F      SBCI	R21,0xFF
+    005DB E084      LDI	R24,4
+    005DC E090      LDI	R25,0
+    005DD 1748      CP	R20,R24
+    005DE 0759      CPC	R21,R25
+    005DF F374      BLT	0x05CE
+(0598)     }
+(0599) 	memcpy(&rslm,&storage,4);
+    005E0 8399      STD	Y+1,R25
+    005E1 8388      ST	Y,R24
+    005E2 EE29      LDI	R18,0xE9
+    005E3 E030      LDI	R19,0
+    005E4 E700      LDI	R16,0x70
+    005E5 E010      LDI	R17,0
+    005E6 D63F      RCALL	<LIBRARY>|_memcpy
+(0600) 
+(0601)     for(int i=0;i<4;i++){
+    005E7 2744      CLR	R20
+    005E8 2755      CLR	R21
+    005E9 C00D      RJMP	0x05F7
+(0602)         storage[i]=EEPROM_read(17+i);
+    005EA 018A      MOVW	R16,R20
+    005EB 5E0F      SUBI	R16,0xEF
+    005EC 4F1F      SBCI	R17,0xFF
+    005ED D2C9      RCALL	_EEPROM_read
+    005EE 2EA0      MOV	R10,R16
+    005EF EE89      LDI	R24,0xE9
+    005F0 E090      LDI	R25,0
+    005F1 01FA      MOVW	R30,R20
+    005F2 0FE8      ADD	R30,R24
+    005F3 1FF9      ADC	R31,R25
+    005F4 82A0      ST	Z,R10
+    005F5 5F4F      SUBI	R20,0xFF
+    005F6 4F5F      SBCI	R21,0xFF
+    005F7 E084      LDI	R24,4
+    005F8 E090      LDI	R25,0
+    005F9 1748      CP	R20,R24
+    005FA 0759      CPC	R21,R25
+    005FB F374      BLT	0x05EA
+(0603)     }
+(0604) 	memcpy(&gslb,&storage,4);
+    005FC 8399      STD	Y+1,R25
+    005FD 8388      ST	Y,R24
+    005FE EE29      LDI	R18,0xE9
+    005FF E030      LDI	R19,0
+    00600 E70C      LDI	R16,0x7C
+    00601 E010      LDI	R17,0
+    00602 D623      RCALL	<LIBRARY>|_memcpy
+(0605) 
+(0606)     for(int i=0;i<4;i++){
+    00603 2744      CLR	R20
+    00604 2755      CLR	R21
+    00605 C00D      RJMP	0x0613
+(0607)         storage[i]=EEPROM_read(21+i);
+    00606 018A      MOVW	R16,R20
+    00607 5E0B      SUBI	R16,0xEB
+    00608 4F1F      SBCI	R17,0xFF
+    00609 D2AD      RCALL	_EEPROM_read
+    0060A 2EA0      MOV	R10,R16
+    0060B EE89      LDI	R24,0xE9
+    0060C E090      LDI	R25,0
+    0060D 01FA      MOVW	R30,R20
+    0060E 0FE8      ADD	R30,R24
+    0060F 1FF9      ADC	R31,R25
+    00610 82A0      ST	Z,R10
+    00611 5F4F      SUBI	R20,0xFF
+    00612 4F5F      SBCI	R21,0xFF
+    00613 E084      LDI	R24,4
+    00614 E090      LDI	R25,0
+    00615 1748      CP	R20,R24
+    00616 0759      CPC	R21,R25
+    00617 F374      BLT	0x0606
+(0608)     }
+(0609) 	memcpy(&gslm,&storage,4);
+    00618 8399      STD	Y+1,R25
+    00619 8388      ST	Y,R24
+    0061A EE29      LDI	R18,0xE9
+    0061B E030      LDI	R19,0
+    0061C E708      LDI	R16,0x78
+    0061D E010      LDI	R17,0
+    0061E D607      RCALL	<LIBRARY>|_memcpy
+(0610) 
+(0611)     for(int i=0;i<4;i++){
+    0061F 2744      CLR	R20
+    00620 2755      CLR	R21
+    00621 C00D      RJMP	0x062F
+(0612)         storage[i]=EEPROM_read(25+i);
+    00622 018A      MOVW	R16,R20
+    00623 5E07      SUBI	R16,0xE7
+    00624 4F1F      SBCI	R17,0xFF
+    00625 D291      RCALL	_EEPROM_read
+    00626 2EA0      MOV	R10,R16
+    00627 EE89      LDI	R24,0xE9
+    00628 E090      LDI	R25,0
+    00629 01FA      MOVW	R30,R20
+    0062A 0FE8      ADD	R30,R24
+    0062B 1FF9      ADC	R31,R25
+    0062C 82A0      ST	Z,R10
+    0062D 5F4F      SUBI	R20,0xFF
+    0062E 4F5F      SBCI	R21,0xFF
+    0062F E084      LDI	R24,4
+    00630 E090      LDI	R25,0
+    00631 1748      CP	R20,R24
+    00632 0759      CPC	R21,R25
+    00633 F374      BLT	0x0622
+(0613)     }
+(0614) 	memcpy(&bslb,&storage,4);
+    00634 8399      STD	Y+1,R25
+    00635 8388      ST	Y,R24
+    00636 EE29      LDI	R18,0xE9
+    00637 E030      LDI	R19,0
+    00638 E804      LDI	R16,0x84
+    00639 E010      LDI	R17,0
+    0063A D5EB      RCALL	<LIBRARY>|_memcpy
+(0615) 
+(0616)     for(int i=0;i<4;i++){
+    0063B 2744      CLR	R20
+    0063C 2755      CLR	R21
+    0063D C00D      RJMP	0x064B
+(0617)         storage[i]=EEPROM_read(29+i);
+    0063E 018A      MOVW	R16,R20
+    0063F 5E03      SUBI	R16,0xE3
+    00640 4F1F      SBCI	R17,0xFF
+    00641 D275      RCALL	_EEPROM_read
+    00642 2EA0      MOV	R10,R16
+    00643 EE89      LDI	R24,0xE9
+    00644 E090      LDI	R25,0
+    00645 01FA      MOVW	R30,R20
+    00646 0FE8      ADD	R30,R24
+    00647 1FF9      ADC	R31,R25
+    00648 82A0      ST	Z,R10
+    00649 5F4F      SUBI	R20,0xFF
+    0064A 4F5F      SBCI	R21,0xFF
+    0064B E084      LDI	R24,4
+    0064C E090      LDI	R25,0
+    0064D 1748      CP	R20,R24
+    0064E 0759      CPC	R21,R25
+    0064F F374      BLT	0x063E
+(0618)     }
+(0619) 	memcpy(&bslm,&storage,4);
+    00650 8399      STD	Y+1,R25
+    00651 8388      ST	Y,R24
+    00652 EE29      LDI	R18,0xE9
+    00653 E030      LDI	R19,0
+    00654 E800      LDI	R16,0x80
+    00655 E010      LDI	R17,0
+    00656 D5CF      RCALL	<LIBRARY>|_memcpy
+(0620) 
+(0621)     for(int i=0;i<4;i++){
+    00657 2744      CLR	R20
+    00658 2755      CLR	R21
+    00659 C00D      RJMP	0x0667
+(0622)         storage[i]=EEPROM_read(33+i);
+    0065A 018A      MOVW	R16,R20
+    0065B 5D0F      SUBI	R16,0xDF
+    0065C 4F1F      SBCI	R17,0xFF
+    0065D D259      RCALL	_EEPROM_read
+    0065E 2EA0      MOV	R10,R16
+    0065F EE89      LDI	R24,0xE9
+    00660 E090      LDI	R25,0
+    00661 01FA      MOVW	R30,R20
+    00662 0FE8      ADD	R30,R24
+    00663 1FF9      ADC	R31,R25
+    00664 82A0      ST	Z,R10
+    00665 5F4F      SUBI	R20,0xFF
+    00666 4F5F      SBCI	R21,0xFF
+    00667 E084      LDI	R24,4
+    00668 E090      LDI	R25,0
+    00669 1748      CP	R20,R24
+    0066A 0759      CPC	R21,R25
+    0066B F374      BLT	0x065A
+(0623)     }
+(0624) 	memcpy(&mcrb,&storage,4);
+    0066C 8399      STD	Y+1,R25
+    0066D 8388      ST	Y,R24
+    0066E EE29      LDI	R18,0xE9
+    0066F E030      LDI	R19,0
+    00670 E80C      LDI	R16,0x8C
+    00671 E010      LDI	R17,0
+    00672 D5B3      RCALL	<LIBRARY>|_memcpy
+(0625) 
+(0626)     for(int i=0;i<4;i++){
+    00673 2744      CLR	R20
+    00674 2755      CLR	R21
+    00675 C00D      RJMP	0x0683
+(0627)         storage[i]=EEPROM_read(37+i);
+    00676 018A      MOVW	R16,R20
+    00677 5D0B      SUBI	R16,0xDB
+    00678 4F1F      SBCI	R17,0xFF
+    00679 D23D      RCALL	_EEPROM_read
+    0067A 2EA0      MOV	R10,R16
+    0067B EE89      LDI	R24,0xE9
+    0067C E090      LDI	R25,0
+    0067D 01FA      MOVW	R30,R20
+    0067E 0FE8      ADD	R30,R24
+    0067F 1FF9      ADC	R31,R25
+    00680 82A0      ST	Z,R10
+    00681 5F4F      SUBI	R20,0xFF
+    00682 4F5F      SBCI	R21,0xFF
+    00683 E084      LDI	R24,4
+    00684 E090      LDI	R25,0
+    00685 1748      CP	R20,R24
+    00686 0759      CPC	R21,R25
+    00687 F374      BLT	0x0676
+(0628)     }
+(0629) 	memcpy(&mcrm,&storage,4);
+    00688 8399      STD	Y+1,R25
+    00689 8388      ST	Y,R24
+    0068A EE29      LDI	R18,0xE9
+    0068B E030      LDI	R19,0
+    0068C E808      LDI	R16,0x88
+    0068D E010      LDI	R17,0
+    0068E D597      RCALL	<LIBRARY>|_memcpy
+(0630) 
+(0631)     for(int i=0;i<4;i++){
+    0068F 2744      CLR	R20
+    00690 2755      CLR	R21
+    00691 C00D      RJMP	0x069F
+(0632)         storage[i]=EEPROM_read(41+i);
+    00692 018A      MOVW	R16,R20
+    00693 5D07      SUBI	R16,0xD7
+    00694 4F1F      SBCI	R17,0xFF
+    00695 D221      RCALL	_EEPROM_read
+    00696 2EA0      MOV	R10,R16
+    00697 EE89      LDI	R24,0xE9
+    00698 E090      LDI	R25,0
+    00699 01FA      MOVW	R30,R20
+    0069A 0FE8      ADD	R30,R24
+    0069B 1FF9      ADC	R31,R25
+    0069C 82A0      ST	Z,R10
+    0069D 5F4F      SUBI	R20,0xFF
+    0069E 4F5F      SBCI	R21,0xFF
+    0069F E084      LDI	R24,4
+    006A0 E090      LDI	R25,0
+    006A1 1748      CP	R20,R24
+    006A2 0759      CPC	R21,R25
+    006A3 F374      BLT	0x0692
+(0633)     }
+(0634) 	memcpy(&mcgb,&storage,4);
+    006A4 8399      STD	Y+1,R25
+    006A5 8388      ST	Y,R24
+    006A6 EE29      LDI	R18,0xE9
+    006A7 E030      LDI	R19,0
+    006A8 E904      LDI	R16,0x94
+    006A9 E010      LDI	R17,0
+    006AA D57B      RCALL	<LIBRARY>|_memcpy
+(0635) 
+(0636)     for(int i=0;i<4;i++){
+    006AB 2744      CLR	R20
+    006AC 2755      CLR	R21
+    006AD C00D      RJMP	0x06BB
+(0637)         storage[i]=EEPROM_read(45+i);
+    006AE 018A      MOVW	R16,R20
+    006AF 5D03      SUBI	R16,0xD3
+    006B0 4F1F      SBCI	R17,0xFF
+    006B1 D205      RCALL	_EEPROM_read
+    006B2 2EA0      MOV	R10,R16
+    006B3 EE89      LDI	R24,0xE9
+    006B4 E090      LDI	R25,0
+    006B5 01FA      MOVW	R30,R20
+    006B6 0FE8      ADD	R30,R24
+    006B7 1FF9      ADC	R31,R25
+    006B8 82A0      ST	Z,R10
+    006B9 5F4F      SUBI	R20,0xFF
+    006BA 4F5F      SBCI	R21,0xFF
+    006BB E084      LDI	R24,4
+    006BC E090      LDI	R25,0
+    006BD 1748      CP	R20,R24
+    006BE 0759      CPC	R21,R25
+    006BF F374      BLT	0x06AE
+(0638)     }
+(0639) 	memcpy(&mcgm,&storage,4);
+    006C0 8399      STD	Y+1,R25
+    006C1 8388      ST	Y,R24
+    006C2 EE29      LDI	R18,0xE9
+    006C3 E030      LDI	R19,0
+    006C4 E900      LDI	R16,0x90
+    006C5 E010      LDI	R17,0
+    006C6 D55F      RCALL	<LIBRARY>|_memcpy
+(0640) 
+(0641)     for(int i=0;i<4;i++){
+    006C7 2744      CLR	R20
+    006C8 2755      CLR	R21
+    006C9 C00D      RJMP	0x06D7
+(0642)         storage[i]=EEPROM_read(49+i);
+    006CA 018A      MOVW	R16,R20
+    006CB 5C0F      SUBI	R16,0xCF
+    006CC 4F1F      SBCI	R17,0xFF
+    006CD D1E9      RCALL	_EEPROM_read
+    006CE 2EA0      MOV	R10,R16
+    006CF EE89      LDI	R24,0xE9
+    006D0 E090      LDI	R25,0
+    006D1 01FA      MOVW	R30,R20
+    006D2 0FE8      ADD	R30,R24
+    006D3 1FF9      ADC	R31,R25
+    006D4 82A0      ST	Z,R10
+    006D5 5F4F      SUBI	R20,0xFF
+    006D6 4F5F      SBCI	R21,0xFF
+    006D7 E084      LDI	R24,4
+    006D8 E090      LDI	R25,0
+    006D9 1748      CP	R20,R24
+    006DA 0759      CPC	R21,R25
+    006DB F374      BLT	0x06CA
+(0643)     }
+(0644) 	memcpy(&mcbb,&storage,4);
+    006DC 8399      STD	Y+1,R25
+    006DD 8388      ST	Y,R24
+    006DE EE29      LDI	R18,0xE9
+    006DF E030      LDI	R19,0
+    006E0 E90C      LDI	R16,0x9C
+    006E1 E010      LDI	R17,0
+    006E2 D543      RCALL	<LIBRARY>|_memcpy
+(0645) 
+(0646)     for(int i=0;i<4;i++){
+    006E3 2744      CLR	R20
+    006E4 2755      CLR	R21
+    006E5 C00D      RJMP	0x06F3
+(0647)         storage[i]=EEPROM_read(53+i);
+    006E6 018A      MOVW	R16,R20
+    006E7 5C0B      SUBI	R16,0xCB
+    006E8 4F1F      SBCI	R17,0xFF
+    006E9 D1CD      RCALL	_EEPROM_read
+    006EA 2EA0      MOV	R10,R16
+    006EB EE89      LDI	R24,0xE9
+    006EC E090      LDI	R25,0
+    006ED 01FA      MOVW	R30,R20
+    006EE 0FE8      ADD	R30,R24
+    006EF 1FF9      ADC	R31,R25
+    006F0 82A0      ST	Z,R10
+    006F1 5F4F      SUBI	R20,0xFF
+    006F2 4F5F      SBCI	R21,0xFF
+    006F3 E084      LDI	R24,4
+    006F4 E090      LDI	R25,0
+    006F5 1748      CP	R20,R24
+    006F6 0759      CPC	R21,R25
+    006F7 F374      BLT	0x06E6
+(0648)     }
+(0649) 	memcpy(&mcbm,&storage,4);
+    006F8 8399      STD	Y+1,R25
+    006F9 8388      ST	Y,R24
+    006FA EE29      LDI	R18,0xE9
+    006FB E030      LDI	R19,0
+    006FC E908      LDI	R16,0x98
+    006FD E010      LDI	R17,0
+    006FE D527      RCALL	<LIBRARY>|_memcpy
+(0650) 
+(0651)     for(int i=0;i<4;i++){
+    006FF 2744      CLR	R20
+    00700 2755      CLR	R21
+    00701 C00D      RJMP	0x070F
+(0652)         storage[i]=EEPROM_read(57+i);
+    00702 018A      MOVW	R16,R20
+    00703 5C07      SUBI	R16,0xC7
+    00704 4F1F      SBCI	R17,0xFF
+    00705 D1B1      RCALL	_EEPROM_read
+    00706 2EA0      MOV	R10,R16
+    00707 EE89      LDI	R24,0xE9
+    00708 E090      LDI	R25,0
+    00709 01FA      MOVW	R30,R20
+    0070A 0FE8      ADD	R30,R24
+    0070B 1FF9      ADC	R31,R25
+    0070C 82A0      ST	Z,R10
+    0070D 5F4F      SUBI	R20,0xFF
+    0070E 4F5F      SBCI	R21,0xFF
+    0070F E084      LDI	R24,4
+    00710 E090      LDI	R25,0
+    00711 1748      CP	R20,R24
+    00712 0759      CPC	R21,R25
+    00713 F374      BLT	0x0702
+(0653)     }
+(0654) 	memcpy(&mchb,&storage,4);
+    00714 8399      STD	Y+1,R25
+    00715 8388      ST	Y,R24
+    00716 EE29      LDI	R18,0xE9
+    00717 E030      LDI	R19,0
+    00718 EA04      LDI	R16,0xA4
+    00719 E010      LDI	R17,0
+    0071A D50B      RCALL	<LIBRARY>|_memcpy
+(0655) 
+(0656)     for(int i=0;i<4;i++){
+    0071B 2744      CLR	R20
+    0071C 2755      CLR	R21
+    0071D C00D      RJMP	0x072B
+(0657)         storage[i]=EEPROM_read(61+i);
+    0071E 018A      MOVW	R16,R20
+    0071F 5C03      SUBI	R16,0xC3
+    00720 4F1F      SBCI	R17,0xFF
+    00721 D195      RCALL	_EEPROM_read
+    00722 2EA0      MOV	R10,R16
+    00723 EE89      LDI	R24,0xE9
+    00724 E090      LDI	R25,0
+    00725 01FA      MOVW	R30,R20
+    00726 0FE8      ADD	R30,R24
+    00727 1FF9      ADC	R31,R25
+    00728 82A0      ST	Z,R10
+    00729 5F4F      SUBI	R20,0xFF
+    0072A 4F5F      SBCI	R21,0xFF
+    0072B E084      LDI	R24,4
+    0072C E090      LDI	R25,0
+    0072D 1748      CP	R20,R24
+    0072E 0759      CPC	R21,R25
+    0072F F374      BLT	0x071E
+(0658)     }
+(0659) 	memcpy(&mchm,&storage,4);
+    00730 8399      STD	Y+1,R25
+    00731 8388      ST	Y,R24
+    00732 EE29      LDI	R18,0xE9
+    00733 E030      LDI	R19,0
+    00734 EA00      LDI	R16,0xA0
+    00735 E010      LDI	R17,0
+    00736 D4EF      RCALL	<LIBRARY>|_memcpy
+(0660) 
+(0661)     for(int i=0;i<4;i++){
+    00737 2744      CLR	R20
+    00738 2755      CLR	R21
+    00739 C00D      RJMP	0x0747
+(0662)         storage[i]=EEPROM_read(65+i);
+    0073A 018A      MOVW	R16,R20
+    0073B 5B0F      SUBI	R16,0xBF
+    0073C 4F1F      SBCI	R17,0xFF
+    0073D D179      RCALL	_EEPROM_read
+    0073E 2EA0      MOV	R10,R16
+    0073F EE89      LDI	R24,0xE9
+    00740 E090      LDI	R25,0
+    00741 01FA      MOVW	R30,R20
+    00742 0FE8      ADD	R30,R24
+    00743 1FF9      ADC	R31,R25
+    00744 82A0      ST	Z,R10
+    00745 5F4F      SUBI	R20,0xFF
+    00746 4F5F      SBCI	R21,0xFF
+    00747 E084      LDI	R24,4
+    00748 E090      LDI	R25,0
+    00749 1748      CP	R20,R24
+    0074A 0759      CPC	R21,R25
+    0074B F374      BLT	0x073A
+(0663)     }
+(0664) 	memcpy(&mcsb,&storage,4);
+    0074C 8399      STD	Y+1,R25
+    0074D 8388      ST	Y,R24
+    0074E EE29      LDI	R18,0xE9
+    0074F E030      LDI	R19,0
+    00750 EA0C      LDI	R16,0xAC
+    00751 E010      LDI	R17,0
+    00752 D4D3      RCALL	<LIBRARY>|_memcpy
+(0665) 
+(0666)     for(int i=0;i<4;i++){
+    00753 2744      CLR	R20
+    00754 2755      CLR	R21
+    00755 C00D      RJMP	0x0763
+(0667)         storage[i]=EEPROM_read(69+i);
+    00756 018A      MOVW	R16,R20
+    00757 5B0B      SUBI	R16,0xBB
+    00758 4F1F      SBCI	R17,0xFF
+    00759 D15D      RCALL	_EEPROM_read
+    0075A 2EA0      MOV	R10,R16
+    0075B EE89      LDI	R24,0xE9
+    0075C E090      LDI	R25,0
+    0075D 01FA      MOVW	R30,R20
+    0075E 0FE8      ADD	R30,R24
+    0075F 1FF9      ADC	R31,R25
+    00760 82A0      ST	Z,R10
+    00761 5F4F      SUBI	R20,0xFF
+    00762 4F5F      SBCI	R21,0xFF
+    00763 E084      LDI	R24,4
+    00764 E090      LDI	R25,0
+    00765 1748      CP	R20,R24
+    00766 0759      CPC	R21,R25
+    00767 F374      BLT	0x0756
+(0668)     }
+(0669) 	memcpy(&mcsm,&storage,4);
+    00768 8399      STD	Y+1,R25
+    00769 8388      ST	Y,R24
+    0076A EE29      LDI	R18,0xE9
+    0076B E030      LDI	R19,0
+    0076C EA08      LDI	R16,0xA8
+    0076D E010      LDI	R17,0
+    0076E D4B7      RCALL	<LIBRARY>|_memcpy
+(0670) 
+(0671)     for(int i=0;i<4;i++){
+    0076F 2744      CLR	R20
+    00770 2755      CLR	R21
+    00771 C00D      RJMP	0x077F
+(0672)         storage[i]=EEPROM_read(73+i);
+    00772 018A      MOVW	R16,R20
+    00773 5B07      SUBI	R16,0xB7
+    00774 4F1F      SBCI	R17,0xFF
+    00775 D141      RCALL	_EEPROM_read
+    00776 2EA0      MOV	R10,R16
+    00777 EE89      LDI	R24,0xE9
+    00778 E090      LDI	R25,0
+    00779 01FA      MOVW	R30,R20
+    0077A 0FE8      ADD	R30,R24
+    0077B 1FF9      ADC	R31,R25
+    0077C 82A0      ST	Z,R10
+    0077D 5F4F      SUBI	R20,0xFF
+    0077E 4F5F      SBCI	R21,0xFF
+    0077F E084      LDI	R24,4
+    00780 E090      LDI	R25,0
+    00781 1748      CP	R20,R24
+    00782 0759      CPC	R21,R25
+    00783 F374      BLT	0x0772
+(0673)     }
+(0674) 	memcpy(&mcvb,&storage,4);
+    00784 8399      STD	Y+1,R25
+    00785 8388      ST	Y,R24
+    00786 EE29      LDI	R18,0xE9
+    00787 E030      LDI	R19,0
+    00788 EB04      LDI	R16,0xB4
+    00789 E010      LDI	R17,0
+    0078A D49B      RCALL	<LIBRARY>|_memcpy
+(0675) 
+(0676)     for(int i=0;i<4;i++){
+    0078B 2744      CLR	R20
+    0078C 2755      CLR	R21
+    0078D C00D      RJMP	0x079B
+(0677)         storage[i]=EEPROM_read(77+i);
+    0078E 018A      MOVW	R16,R20
+    0078F 5B03      SUBI	R16,0xB3
+    00790 4F1F      SBCI	R17,0xFF
+    00791 D125      RCALL	_EEPROM_read
+    00792 2EA0      MOV	R10,R16
+    00793 EE89      LDI	R24,0xE9
+    00794 E090      LDI	R25,0
+    00795 01FA      MOVW	R30,R20
+    00796 0FE8      ADD	R30,R24
+    00797 1FF9      ADC	R31,R25
+    00798 82A0      ST	Z,R10
+    00799 5F4F      SUBI	R20,0xFF
+    0079A 4F5F      SBCI	R21,0xFF
+    0079B E084      LDI	R24,4
+    0079C E090      LDI	R25,0
+    0079D 1748      CP	R20,R24
+    0079E 0759      CPC	R21,R25
+    0079F F374      BLT	0x078E
+(0678)     }
+(0679) 	memcpy(&mcvm,&storage,4);
+    007A0 8399      STD	Y+1,R25
+    007A1 8388      ST	Y,R24
+    007A2 EE29      LDI	R18,0xE9
+    007A3 E030      LDI	R19,0
+    007A4 EB00      LDI	R16,0xB0
+    007A5 E010      LDI	R17,0
+    007A6 D47F      RCALL	<LIBRARY>|_memcpy
+(0680)     //Matriz de correccion HSV
+(0681)     MHSV11=EEPROM_read(200)<<8;           //Parte alta EEPROM[38:39]
+    007A7 EC08      LDI	R16,0xC8
+    007A8 E010      LDI	R17,0
+    007A9 D10D      RCALL	_EEPROM_read
+    007AA 2EA0      MOV	R10,R16
+    007AB 2C2A      MOV	R2,R10
+    007AC 2433      CLR	R3
+    007AD 2C32      MOV	R3,R2
+    007AE 2422      CLR	R2
+    007AF 9230 00B9 STS	_MHSV11+1,R3
+    007B1 9220 00B8 STS	_MHSV11,R2
+(0682)     MHSV11 |= EEPROM_read(201);           //Parte baja
+    007B3 EC09      LDI	R16,0xC9
+    007B4 E010      LDI	R17,0
+    007B5 D101      RCALL	_EEPROM_read
+    007B6 2EA0      MOV	R10,R16
+    007B7 2C2A      MOV	R2,R10
+    007B8 2433      CLR	R3
+    007B9 9040 00B8 LDS	R4,_MHSV11
+    007BB 9050 00B9 LDS	R5,_MHSV11+1
+    007BD 2842      OR	R4,R2
+    007BE 2853      OR	R5,R3
+    007BF 9250 00B9 STS	_MHSV11+1,R5
+    007C1 9240 00B8 STS	_MHSV11,R4
+(0683)     MHSV12=EEPROM_read(202)<<8;           //Parte alta EEPROM[40:41]
+    007C3 EC0A      LDI	R16,0xCA
+    007C4 E010      LDI	R17,0
+    007C5 D0F1      RCALL	_EEPROM_read
+    007C6 2EA0      MOV	R10,R16
+    007C7 2C2A      MOV	R2,R10
+    007C8 2433      CLR	R3
+    007C9 2C32      MOV	R3,R2
+    007CA 2422      CLR	R2
+    007CB 9230 00BB STS	_MHSV12+1,R3
+    007CD 9220 00BA STS	_MHSV12,R2
+(0684)     MHSV12 |= EEPROM_read(203);           //Parte baja
+    007CF EC0B      LDI	R16,0xCB
+    007D0 E010      LDI	R17,0
+    007D1 D0E5      RCALL	_EEPROM_read
+    007D2 2EA0      MOV	R10,R16
+    007D3 2C2A      MOV	R2,R10
+    007D4 2433      CLR	R3
+    007D5 9040 00BA LDS	R4,_MHSV12
+    007D7 9050 00BB LDS	R5,_MHSV12+1
+    007D9 2842      OR	R4,R2
+    007DA 2853      OR	R5,R3
+    007DB 9250 00BB STS	_MHSV12+1,R5
+    007DD 9240 00BA STS	_MHSV12,R4
+(0685)     MHSV13=EEPROM_read(204)<<8;           //Parte alta EEPROM[42:43]
+    007DF EC0C      LDI	R16,0xCC
+    007E0 E010      LDI	R17,0
+    007E1 D0D5      RCALL	_EEPROM_read
+    007E2 2EA0      MOV	R10,R16
+    007E3 2C2A      MOV	R2,R10
+    007E4 2433      CLR	R3
+    007E5 2C32      MOV	R3,R2
+    007E6 2422      CLR	R2
+    007E7 9230 00BD STS	_MHSV13+1,R3
+    007E9 9220 00BC STS	_MHSV13,R2
+(0686)     MHSV13 |= EEPROM_read(205);           //Parte baja
+    007EB EC0D      LDI	R16,0xCD
+    007EC E010      LDI	R17,0
+    007ED D0C9      RCALL	_EEPROM_read
+    007EE 2EA0      MOV	R10,R16
+    007EF 2C2A      MOV	R2,R10
+    007F0 2433      CLR	R3
+    007F1 9040 00BC LDS	R4,_MHSV13
+    007F3 9050 00BD LDS	R5,_MHSV13+1
+    007F5 2842      OR	R4,R2
+    007F6 2853      OR	R5,R3
+    007F7 9250 00BD STS	_MHSV13+1,R5
+    007F9 9240 00BC STS	_MHSV13,R4
+(0687)     MHSV21=EEPROM_read(206)<<8;           //Parte alta EEPROM[44:45]
+    007FB EC0E      LDI	R16,0xCE
+    007FC E010      LDI	R17,0
+    007FD D0B9      RCALL	_EEPROM_read
+    007FE 2EA0      MOV	R10,R16
+    007FF 2C2A      MOV	R2,R10
+    00800 2433      CLR	R3
+    00801 2C32      MOV	R3,R2
+    00802 2422      CLR	R2
+    00803 9230 00BF STS	_MHSV21+1,R3
+    00805 9220 00BE STS	_MHSV21,R2
+(0688)     MHSV21 |= EEPROM_read(207);           //Parte baja
+    00807 EC0F      LDI	R16,0xCF
+    00808 E010      LDI	R17,0
+    00809 D0AD      RCALL	_EEPROM_read
+    0080A 2EA0      MOV	R10,R16
+    0080B 2C2A      MOV	R2,R10
+    0080C 2433      CLR	R3
+    0080D 9040 00BE LDS	R4,_MHSV21
+    0080F 9050 00BF LDS	R5,_MHSV21+1
+    00811 2842      OR	R4,R2
+    00812 2853      OR	R5,R3
+    00813 9250 00BF STS	_MHSV21+1,R5
+    00815 9240 00BE STS	_MHSV21,R4
+(0689)     MHSV22=EEPROM_read(208)<<8;           //Parte alta EEPROM[46:47]
+    00817 ED00      LDI	R16,0xD0
+    00818 E010      LDI	R17,0
+    00819 D09D      RCALL	_EEPROM_read
+    0081A 2EA0      MOV	R10,R16
+    0081B 2C2A      MOV	R2,R10
+    0081C 2433      CLR	R3
+    0081D 2C32      MOV	R3,R2
+    0081E 2422      CLR	R2
+    0081F 9230 00C1 STS	_MHSV22+1,R3
+    00821 9220 00C0 STS	_MHSV22,R2
+(0690)     MHSV22 |= EEPROM_read(209);           //Parte baja
+    00823 ED01      LDI	R16,0xD1
+    00824 E010      LDI	R17,0
+    00825 D091      RCALL	_EEPROM_read
+    00826 2EA0      MOV	R10,R16
+    00827 2C2A      MOV	R2,R10
+    00828 2433      CLR	R3
+    00829 9040 00C0 LDS	R4,_MHSV22
+    0082B 9050 00C1 LDS	R5,_MHSV22+1
+    0082D 2842      OR	R4,R2
+    0082E 2853      OR	R5,R3
+    0082F 9250 00C1 STS	_MHSV22+1,R5
+    00831 9240 00C0 STS	_MHSV22,R4
+(0691)     MHSV23=EEPROM_read(210)<<8;           //Parte alta EEPROM[48:49]
+    00833 ED02      LDI	R16,0xD2
+    00834 E010      LDI	R17,0
+    00835 D081      RCALL	_EEPROM_read
+    00836 2EA0      MOV	R10,R16
+    00837 2C2A      MOV	R2,R10
+    00838 2433      CLR	R3
+    00839 2C32      MOV	R3,R2
+    0083A 2422      CLR	R2
+    0083B 9230 00C3 STS	_MHSV23+1,R3
+    0083D 9220 00C2 STS	_MHSV23,R2
+(0692)     MHSV23 |= EEPROM_read(211);           //Parte baja
+    0083F ED03      LDI	R16,0xD3
+    00840 E010      LDI	R17,0
+    00841 D075      RCALL	_EEPROM_read
+    00842 2EA0      MOV	R10,R16
+    00843 2C2A      MOV	R2,R10
+    00844 2433      CLR	R3
+    00845 9040 00C2 LDS	R4,_MHSV23
+    00847 9050 00C3 LDS	R5,_MHSV23+1
+    00849 2842      OR	R4,R2
+    0084A 2853      OR	R5,R3
+    0084B 9250 00C3 STS	_MHSV23+1,R5
+    0084D 9240 00C2 STS	_MHSV23,R4
+(0693)     MHSV31=EEPROM_read(212)<<8;           //Parte alta EEPROM[50:51]
+    0084F ED04      LDI	R16,0xD4
+    00850 E010      LDI	R17,0
+    00851 D065      RCALL	_EEPROM_read
+    00852 2EA0      MOV	R10,R16
+    00853 2C2A      MOV	R2,R10
+    00854 2433      CLR	R3
+    00855 2C32      MOV	R3,R2
+    00856 2422      CLR	R2
+    00857 9230 00C5 STS	_MHSV31+1,R3
+    00859 9220 00C4 STS	_MHSV31,R2
+(0694)     MHSV31 |= EEPROM_read(213);           //Parte baja
+    0085B ED05      LDI	R16,0xD5
+    0085C E010      LDI	R17,0
+    0085D D059      RCALL	_EEPROM_read
+    0085E 2EA0      MOV	R10,R16
+    0085F 2C2A      MOV	R2,R10
+    00860 2433      CLR	R3
+    00861 9040 00C4 LDS	R4,_MHSV31
+    00863 9050 00C5 LDS	R5,_MHSV31+1
+    00865 2842      OR	R4,R2
+    00866 2853      OR	R5,R3
+    00867 9250 00C5 STS	_MHSV31+1,R5
+    00869 9240 00C4 STS	_MHSV31,R4
+(0695)     MHSV32=EEPROM_read(214)<<8;           //Parte alta EEPROM[52:53]
+    0086B ED06      LDI	R16,0xD6
+    0086C E010      LDI	R17,0
+    0086D D049      RCALL	_EEPROM_read
+    0086E 2EA0      MOV	R10,R16
+    0086F 2C2A      MOV	R2,R10
+    00870 2433      CLR	R3
+    00871 2C32      MOV	R3,R2
+    00872 2422      CLR	R2
+    00873 9230 00C7 STS	_MHSV32+1,R3
+    00875 9220 00C6 STS	_MHSV32,R2
+(0696)     MHSV32 |= EEPROM_read(215);           //Parte baja
+    00877 ED07      LDI	R16,0xD7
+    00878 E010      LDI	R17,0
+    00879 D03D      RCALL	_EEPROM_read
+    0087A 2EA0      MOV	R10,R16
+    0087B 2C2A      MOV	R2,R10
+    0087C 2433      CLR	R3
+    0087D 9040 00C6 LDS	R4,_MHSV32
+    0087F 9050 00C7 LDS	R5,_MHSV32+1
+    00881 2842      OR	R4,R2
+    00882 2853      OR	R5,R3
+    00883 9250 00C7 STS	_MHSV32+1,R5
+    00885 9240 00C6 STS	_MHSV32,R4
+(0697)     MHSV33=EEPROM_read(216)<<8;           //Parte alta EEPROM[54:55]
+    00887 ED08      LDI	R16,0xD8
+    00888 E010      LDI	R17,0
+    00889 D02D      RCALL	_EEPROM_read
+    0088A 2EA0      MOV	R10,R16
+    0088B 2C2A      MOV	R2,R10
+    0088C 2433      CLR	R3
+    0088D 2C32      MOV	R3,R2
+    0088E 2422      CLR	R2
+    0088F 9230 00C9 STS	_MHSV33+1,R3
+    00891 9220 00C8 STS	_MHSV33,R2
+(0698)     MHSV33 |= EEPROM_read(217);           //Parte baja
+    00893 ED09      LDI	R16,0xD9
+    00894 E010      LDI	R17,0
+    00895 D021      RCALL	_EEPROM_read
+    00896 2EA0      MOV	R10,R16
+    00897 2C2A      MOV	R2,R10
+    00898 2433      CLR	R3
+    00899 9040 00C8 LDS	R4,_MHSV33
+    0089B 9050 00C9 LDS	R5,_MHSV33+1
+    0089D 2842      OR	R4,R2
+    0089E 2853      OR	R5,R3
+    0089F 9250 00C9 STS	_MHSV33+1,R5
+    008A1 9240 00C8 STS	_MHSV33,R4
+    008A3 9622      ADIW	R28,2
+    008A4 C3E8      RJMP	pop_xgset300C
+    008A5 9508      RET
+(0699) 
+(0700) 
+(0701) 
+(0702) 
+(0703) 
+(0704) 
+(0705)     /*for(i=200;i<456;i++)
+(0706)     {
+(0707)         Gama[i-200]=EEPROM_read(i);          //EEPROM[200:455]
+(0708)     }*/
+(0709) }
+(0710) 
+(0711) //!------------------------------------------------ Transferencia SPI -----------------------------------------------------
+(0712) uint8_t SPI_SlaveTransfer(uint8_t Dato, char llamada)
+(0713) {
+(0714)     //dato a Transferir
+(0715)     USIDR=Dato;
+_SPI_SlaveTransfer:
+  llamada              --> R18
+  Dato                 --> R16
+    008A6 B90F      OUT	0x0F,R16
+(0716)     if(llamada==1)
+    008A7 3021      CPI	R18,1
+    008A8 F411      BNE	0x08AB
+(0717)     {
+(0718)         //falta esperar a que el pin no sea cero debido a otro dispositivo en la red (checar, no creo que funcione)
+(0719)         //Indicar Ready
+(0720)         DDRB |= 0x04;  //poner como salida PB2 (INT0)
+    008A9 9ABA      SBI	0x17,2
+(0721)         PORTB&=~0x04;  //PB2=0 (INT0)
+    008AA 98C2      CBI	0x18,2
+(0722)     }
+(0723)     //Limpiar bandera counter overflow y contador para comenzar envio
+(0724) 	USISR = (1<<USIOIF);
+    008AB E480      LDI	R24,0x40
+    008AC B98E      OUT	0x0E,R24
+(0725)     //Esperar a que se termine la transaccion
+(0726)     while((USISR&(1<<USIOIF))!=(1<<USIOIF)){};
+    008AD B18E      IN	R24,0x0E
+    008AE 7480      ANDI	R24,0x40
+    008AF 3480      CPI	R24,0x40
+    008B0 F7E1      BNE	0x08AD
+(0727)     if(llamada==1)
+    008B1 3021      CPI	R18,1
+    008B2 F411      BNE	0x08B5
+(0728)     {
+(0729)         //Indicar busy
+(0730)         DDRB &= ~0x04; //poner como entrada PB2 (INT0)
+    008B3 98BA      CBI	0x17,2
+(0731)         PORTB|= 0x04;  //Pull up PB2 (INT0)
+    008B4 9AC2      SBI	0x18,2
+(0732)     }
+(0733)     //Leer dato recibido
+(0734)     Dato=USIDR;
+    008B5 B10F      IN	R16,0x0F
+    008B6 9508      RET
+(0735)     return Dato;
+(0736) }
+(0737) 
+(0738) //!--------------------------------------------- Leer un byte de EEprom ---------------------------------------------------
+(0739) uint8_t EEPROM_read(uint16_t ucAddress)
+(0740) {
+(0741)     /* Wait for completion of previous write */
+(0742)     while(EECR & (1<<EEPE)){};
+_EEPROM_read:
+  ucAddress            --> R16
+    008B7 99E1      SBIC	0x1C,1
+    008B8 CFFE      RJMP	_EEPROM_read
+(0743)     /* Set up address register */
+(0744)     EEAR = ucAddress;
+    008B9 BB1F      OUT	0x1F,R17
+    008BA BB0E      OUT	0x1E,R16
+(0745)     /* Start eeprom read by writing EERE */
+(0746)     EECR |= (1<<EERE);
+    008BB 9AE0      SBI	0x1C,0
+(0747)     /* Return data from data register */
+(0748)     return EEDR;
+    008BC B30D      IN	R16,0x1D
+    008BD 9508      RET
+(0749) }
+(0750) 
+(0751) //!------------------------------------------- Escribir un byte en EEprom -------------------------------------------------
+(0752) void EEPROM_write(uint16_t ucAddress, uint8_t ucData)
+(0753) {
+(0754)     /* Wait for completion of previous write */
+(0755)     while(EECR & (1<<EEPE)){};
+_EEPROM_write:
+  ucData               --> R18
+  ucAddress            --> R16
+    008BE 99E1      SBIC	0x1C,1
+    008BF CFFE      RJMP	_EEPROM_write
+(0756)     /* Set Programming mode */
+(0757)     EECR = (0<<EEPM1)|(0<<EEPM0);
+    008C0 2422      CLR	R2
+    008C1 BA2C      OUT	0x1C,R2
+(0758)     /* Set up address and data registers */
+(0759)     EEAR = ucAddress;
+    008C2 BB1F      OUT	0x1F,R17
+    008C3 BB0E      OUT	0x1E,R16
+(0760)     EEDR = ucData;
+    008C4 BB2D      OUT	0x1D,R18
+(0761)     /* Write logical one to EEMPE */
+(0762)     EECR |= (1<<EEMPE);
+    008C5 9AE2      SBI	0x1C,2
+(0763)     /* Start eeprom write by setting EEPE */
+(0764)     EECR |= (1<<EEPE);
+    008C6 9AE1      SBI	0x1C,1
+    008C7 9508      RET
+(0765) }
+(0766) 
+(0767) //!--------------------------------------------- Configuracion de perifericos -----------------------------------------------
+(0768) void Config(void)
+(0769) {
+(0770)     //stop errant interrupts until set up
+(0771)     CLI(); //disable all interrupts
+_Config:
+    008C8 94F8      BCLR	7
+(0772) 
+(0773)     //Configurar SPI SLAVE en SPI, reloj externo ambos flancos, sin interrupcion
+(0774)     USICR=(1<<USIWM0)|(1<<USICS1);
+    008C9 E188      LDI	R24,0x18
+    008CA B98D      OUT	0x0D,R24
+(0775)     //Poner DO(PA5) en DDRA como salida
+(0776)     DDRA|=0x20;
+    008CB 9AD5      SBI	0x1A,5
+(0777)     //Pull ups en MOSI(DI)(PA6) y USCK(PA4)
+(0778)     PORTA|=(0x40)|(0x01);
+    008CC B38B      IN	R24,0x1B
+    008CD 6481      ORI	R24,0x41
+    008CE BB8B      OUT	0x1B,R24
+(0779) 
+(0780)     //configurar puertos
+(0781)     DDRA|= 0x06; //PA2 y PA1 para seleccion de color
+    008CF B38A      IN	R24,0x1A
+    008D0 6086      ORI	R24,6
+    008D1 BB8A      OUT	0x1A,R24
+(0782)     PORTB|=0x08 | 0x04; //Pull up PB3 (RESET), PB2 (INT0)
+    008D2 B388      IN	R24,0x18
+    008D3 608C      ORI	R24,0xC
+    008D4 BB88      OUT	0x18,R24
+(0783)     //Configurar int0
+(0784)     MCUCR |= 0x02;
+    008D5 B785      IN	R24,0x35
+    008D6 6082      ORI	R24,2
+    008D7 BF85      OUT	0x35,R24
+(0785)     GIMSK |= 0x40;
+    008D8 B78B      IN	R24,0x3B
+    008D9 6480      ORI	R24,0x40
+    008DA BF8B      OUT	0x3B,R24
+(0786)     //Configurar timers
+(0787)     TIMSK1 |= 0x02;
+    008DB 9A61      SBI	0x0C,1
+(0788)     TIMSK0 |= (1<<TOIE0);
+    008DC B789      IN	R24,0x39
+    008DD 6081      ORI	R24,1
+    008DE BF89      OUT	0x39,R24
+(0789) 
+(0790)     //TCCR1A = 0x02;
+(0791)     TCCR1B |= (1 << WGM12);
+    008DF B58E      IN	R24,0x2E
+    008E0 6088      ORI	R24,0x8
+    008E1 BD8E      OUT	0x2E,R24
+(0792) 
+(0793) 
+(0794) 
+(0795)     //CargaParametros();
+(0796) 
+(0797)     /*
+(0798)   //configurar timer 0
+(0799)  //TIMER0 initialize - prescale:64
+(0800) // WGM: Normal
+(0801) // desired value: 2KHz
+(0802) // actual value:  2,000KHz (0,0%)
+(0803)  TCCR0B = 0x00; //stop timer
+(0804)  TCCR0A = 0x00; //start timer ok, no mover
+(0805)  OCR0A = 0x7D;  //Valor para ventana de tiempo de 500us
+(0806)  OCR0B = 0x7D;  //""
+(0807)  //TCNT0 = 0x83;  //set count
+(0808)  //TCCR0B = 0x03; //start timer CLK/64 = 2KHz, a 16MHz
+(0809) 
+(0810)  //configurar timer 1
+(0811)  //TIMER1 initialize - prescale:Rising edge as a counter
+(0812)  // WGM: 0) Normal, TOP=0xFFFF
+(0813)  // desired value: 1Hz
+(0814)  // actual value: Out of range
+(0815)  TCCR1B = 0x00; //stop timer1
+(0816)  TCCR1A = 0x00;
+(0817)  // TCCR1B = 0x07; //start Timer T1 entrada de pulsos
+(0818) 
+(0819)  //interrupciones timers
+(0820)  MCUCR = 0x00;
+(0821)  GIMSK = 0x00;
+(0822)  TIMSK = 0x81; //timer1 ovf y timer0 compA
+(0823) 
+(0824)  // //re-enable interrupts
+(0825)  //all peripherals are now initialized
+(0826)  */
+(0827)  SEI();
+    008E2 9478      BSET	7
+    008E3 9508      RET
+(0828) }
+_delayus:
+  i                    --> R20
+  usec                 --> R10
+    008E4 D3A3      RCALL	push_xgset300C
+    008E5 0158      MOVW	R10,R16
+(0829) 
+(0830) void delayus(unsigned int usec)
+(0831) {
+(0832)  unsigned int i;
+(0833)  usec=usec*3;
+    008E6 E003      LDI	R16,3
+    008E7 E010      LDI	R17,0
+    008E8 0195      MOVW	R18,R10
+    008E9 D3F4      RCALL	mpy16s
+    008EA 0158      MOVW	R10,R16
+(0834)  for(i=0; i<(usec);i++){};
+    008EB 2744      CLR	R20
+    008EC 2755      CLR	R21
+    008ED C002      RJMP	0x08F0
+    008EE 5F4F      SUBI	R20,0xFF
+    008EF 4F5F      SBCI	R21,0xFF
+    008F0 154A      CP	R20,R10
+    008F1 055B      CPC	R21,R11
+    008F2 F3D8      BCS	0x08EE
+    008F3 C399      RJMP	pop_xgset300C
+    008F4 9508      RET
+(0835) }
+_delay_ms:
+  j                    --> Y,+0
+  msec                 --> Y,+8
+    008F5 D33E      RCALL	push_arg4
+    008F6 D39B      RCALL	push_xgsetF000
+    008F7 9724      SBIW	R28,4
+(0836) 
+(0837) void delay_ms(uint32_t msec)
+(0838) {
+(0839)     uint32_t j;
+(0840) 	for(j=0;j<(msec*100);j++);
+    008F8 E080      LDI	R24,0
+    008F9 8388      ST	Y,R24
+    008FA 8389      STD	Y+1,R24
+    008FB 838A      STD	Y+2,R24
+    008FC 838B      STD	Y+3,R24
+    008FD C010      RJMP	0x090E
+    008FE E041      LDI	R20,1
+    008FF E050      LDI	R21,0
+    00900 E060      LDI	R22,0
+    00901 E070      LDI	R23,0
+    00902 8028      LD	R2,Y
+    00903 8039      LDD	R3,Y+1
+    00904 804A      LDD	R4,Y+2
+    00905 805B      LDD	R5,Y+3
+    00906 0E24      ADD	R2,R20
+    00907 1E35      ADC	R3,R21
+    00908 1E46      ADC	R4,R22
+    00909 1E57      ADC	R5,R23
+    0090A 8228      ST	Y,R2
+    0090B 8239      STD	Y+1,R3
+    0090C 824A      STD	Y+2,R4
+    0090D 825B      STD	Y+3,R5
+    0090E 8428      LDD	R2,Y+8
+    0090F 8439      LDD	R3,Y+9
+    00910 844A      LDD	R4,Y+10
+    00911 845B      LDD	R5,Y+11
+    00912 E644      LDI	R20,0x64
+    00913 E050      LDI	R21,0
+    00914 E060      LDI	R22,0
+    00915 E070      LDI	R23,0
+    00916 925A      ST	-Y,R5
+    00917 924A      ST	-Y,R4
+    00918 923A      ST	-Y,R3
+    00919 922A      ST	-Y,R2
+    0091A 018A      MOVW	R16,R20
+    0091B 019B      MOVW	R18,R22
+    0091C D3D5      RCALL	mpy32u|mpy32s
+    0091D 8028      LD	R2,Y
+    0091E 8039      LDD	R3,Y+1
+    0091F 804A      LDD	R4,Y+2
+    00920 805B      LDD	R5,Y+3
+    00921 1620      CP	R2,R16
+    00922 0631      CPC	R3,R17
+    00923 0642      CPC	R4,R18
+    00924 0653      CPC	R5,R19
+    00925 F2C0      BCS	0x08FE
+    00926 9624      ADIW	R28,4
+    00927 D36F      RCALL	pop_xgsetF000
+    00928 9624      ADIW	R28,4
+    00929 9508      RET
+(0841) }
+_GuardaParametros:
+  i                    --> R20
+  i                    --> R20
+  i                    --> R20
+  i                    --> R20
+  i                    --> R20
+  i                    --> R20
+  i                    --> R20
+  i                    --> R20
+  i                    --> R20
+  i                    --> R20
+  i                    --> R20
+  i                    --> R20
+  i                    --> R20
+  i                    --> R20
+  i                    --> R20
+  i                    --> R20
+  i                    --> R20
+  i                    --> R20
+    0092A 934A      ST	-Y,R20
+    0092B 935A      ST	-Y,R21
+    0092C 9722      SBIW	R28,2
+(0842) 
+(0843) /*
+(0844) //Convierte char a hex y lo envia por el puerto serie, tarda 2.6ms aprox
+(0845) void EnviaHex(unsigned int valor)
+(0846) {
+(0847)  unsigned int VHL[2],aux;
+(0848)  if(valor>255) valor=255;
+(0849)  aux=valor;
+(0850)  //Conversion de binario a hex
+(0851)  aux=aux/16;  		 //separar parte entera
+(0852)  VHL[1]=aux;     		 //parte alta
+(0853)  VHL[0]=valor-aux*16; 	 //Parte baja
+(0854) 
+(0855)  //Conversion hex a char
+(0856)  for(aux=0; aux<2; aux++)
+(0857)  {
+(0858)   if(VHL[aux]<=9) VHL[aux]=VHL[aux]+48; //menores a 9
+(0859)   else VHL[aux]=VHL[aux]+55; //10 a 15
+(0860)  }
+(0861) 
+(0862)  //Transmision de datos
+(0863)  //UDR=VHL[1]; //Parte alta
+(0864)  //while((UCSRA&0x40)!=0x40){}; //bandera TXC 1.044ms aprox
+(0865)  //UCSRA|=0x40; //apagar bandera TXC
+(0866)  //delayus(450); //esperar 500us
+(0867)  //UDR=VHL[0]; //Parte baja
+(0868)  //while((UCSRA&0x40)!=0x40){}; //bandera TXC 1.044ms aprox
+(0869)  //UCSRA|=0x40; //apagar bandera TXC
+(0870)  //aqui no conviene esperar, tanto
+(0871)  //el tiempo de adquisicion del siguiente dato es de 1/2ms
+(0872) }
+(0873) */
+(0874) 
+(0875) 
+(0876) 
+(0877) 
+(0878) 
+(0879) 
+(0880) 
+(0881) 
+(0882) 
+(0883) 
+(0884) 
+(0885) 
+(0886) 
+(0887) 
+(0888) //-------------------------------------borrar
+(0889) 
+(0890) 
+(0891) void GuardaParametros(void)
+(0892) {
+(0893)     //Comandos de correccion de color
+(0894)     EEPROM_write(1, BalanceNegros);
+    0092D 9120 0069 LDS	R18,_BalanceNegros
+    0092F E001      LDI	R16,1
+    00930 E010      LDI	R17,0
+    00931 DF8C      RCALL	_EEPROM_write
+(0895)     EEPROM_write(2, BalanceBlancos);
+    00932 9120 006A LDS	R18,_BalanceBlancos
+    00934 E002      LDI	R16,2
+    00935 E010      LDI	R17,0
+    00936 DF87      RCALL	_EEPROM_write
+(0896)     EEPROM_write(3, CorregirGama);
+    00937 9120 006B LDS	R18,_CorregirGama
+    00939 E003      LDI	R16,3
+    0093A E010      LDI	R17,0
+    0093B DF82      RCALL	_EEPROM_write
+(0897)     EEPROM_write(4, CorregirColor);
+    0093C 9120 006C LDS	R18,_CorregirColor
+    0093E E004      LDI	R16,4
+    0093F E010      LDI	R17,0
+    00940 DF7D      RCALL	_EEPROM_write
+(0898)     EEPROM_write(5, CorregirHSV);
+    00941 9120 006D LDS	R18,_CorregirHSV
+    00943 E005      LDI	R16,5
+    00944 E010      LDI	R17,0
+    00945 DF78      RCALL	_EEPROM_write
+(0899)     EEPROM_write(6, ObtenerRGBdeHSV);
+    00946 9120 006E LDS	R18,_ObtenerRGBdeHSV
+    00948 E006      LDI	R16,6
+    00949 E010      LDI	R17,0
+    0094A DF73      RCALL	_EEPROM_write
+(0900) 
+(0901) 	 //Parametros de correccion de color
+(0902) 	memcpy(storage,&rslb,4);
+    0094B E084      LDI	R24,4
+    0094C E090      LDI	R25,0
+    0094D 8399      STD	Y+1,R25
+    0094E 8388      ST	Y,R24
+    0094F E724      LDI	R18,0x74
+    00950 E030      LDI	R19,0
+    00951 EE09      LDI	R16,0xE9
+    00952 E010      LDI	R17,0
+    00953 D2D2      RCALL	<LIBRARY>|_memcpy
+(0903) 	for(int i=0;i<4;i++){
+    00954 2744      CLR	R20
+    00955 2755      CLR	R21
+    00956 C00C      RJMP	0x0963
+(0904) 		 EEPROM_write(9+i,storage[i]);
+    00957 EE89      LDI	R24,0xE9
+    00958 E090      LDI	R25,0
+    00959 01FA      MOVW	R30,R20
+    0095A 0FE8      ADD	R30,R24
+    0095B 1FF9      ADC	R31,R25
+    0095C 8120      LD	R18,Z
+    0095D 018A      MOVW	R16,R20
+    0095E 5F07      SUBI	R16,0xF7
+    0095F 4F1F      SBCI	R17,0xFF
+    00960 DF5D      RCALL	_EEPROM_write
+    00961 5F4F      SUBI	R20,0xFF
+    00962 4F5F      SBCI	R21,0xFF
+    00963 E084      LDI	R24,4
+    00964 E090      LDI	R25,0
+    00965 1748      CP	R20,R24
+    00966 0759      CPC	R21,R25
+    00967 F37C      BLT	0x0957
+(0905) 	}
+(0906) 	memcpy(storage,&rslm,4);
+    00968 8399      STD	Y+1,R25
+    00969 8388      ST	Y,R24
+    0096A E720      LDI	R18,0x70
+    0096B E030      LDI	R19,0
+    0096C EE09      LDI	R16,0xE9
+    0096D E010      LDI	R17,0
+    0096E D2B7      RCALL	<LIBRARY>|_memcpy
+(0907) 	for(int i=0;i<4;i++){
+    0096F 2744      CLR	R20
+    00970 2755      CLR	R21
+    00971 C00C      RJMP	0x097E
+(0908) 		EEPROM_write(13+i,storage[i]);
+    00972 EE89      LDI	R24,0xE9
+    00973 E090      LDI	R25,0
+    00974 01FA      MOVW	R30,R20
+    00975 0FE8      ADD	R30,R24
+    00976 1FF9      ADC	R31,R25
+    00977 8120      LD	R18,Z
+    00978 018A      MOVW	R16,R20
+    00979 5F03      SUBI	R16,0xF3
+    0097A 4F1F      SBCI	R17,0xFF
+    0097B DF42      RCALL	_EEPROM_write
+    0097C 5F4F      SUBI	R20,0xFF
+    0097D 4F5F      SBCI	R21,0xFF
+    0097E E084      LDI	R24,4
+    0097F E090      LDI	R25,0
+    00980 1748      CP	R20,R24
+    00981 0759      CPC	R21,R25
+    00982 F37C      BLT	0x0972
+(0909) 	}
+(0910) 	memcpy(storage,&gslb,4);
+    00983 8399      STD	Y+1,R25
+    00984 8388      ST	Y,R24
+    00985 E72C      LDI	R18,0x7C
+    00986 E030      LDI	R19,0
+    00987 EE09      LDI	R16,0xE9
+    00988 E010      LDI	R17,0
+    00989 D29C      RCALL	<LIBRARY>|_memcpy
+(0911) 	for(int i=0;i<4;i++){
+    0098A 2744      CLR	R20
+    0098B 2755      CLR	R21
+    0098C C00C      RJMP	0x0999
+(0912) 		EEPROM_write(17+i,storage[i]);
+    0098D EE89      LDI	R24,0xE9
+    0098E E090      LDI	R25,0
+    0098F 01FA      MOVW	R30,R20
+    00990 0FE8      ADD	R30,R24
+    00991 1FF9      ADC	R31,R25
+    00992 8120      LD	R18,Z
+    00993 018A      MOVW	R16,R20
+    00994 5E0F      SUBI	R16,0xEF
+    00995 4F1F      SBCI	R17,0xFF
+    00996 DF27      RCALL	_EEPROM_write
+    00997 5F4F      SUBI	R20,0xFF
+    00998 4F5F      SBCI	R21,0xFF
+    00999 E084      LDI	R24,4
+    0099A E090      LDI	R25,0
+    0099B 1748      CP	R20,R24
+    0099C 0759      CPC	R21,R25
+    0099D F37C      BLT	0x098D
+(0913) 	}
+(0914) 	memcpy(storage,&gslm,4);
+    0099E 8399      STD	Y+1,R25
+    0099F 8388      ST	Y,R24
+    009A0 E728      LDI	R18,0x78
+    009A1 E030      LDI	R19,0
+    009A2 EE09      LDI	R16,0xE9
+    009A3 E010      LDI	R17,0
+    009A4 D281      RCALL	<LIBRARY>|_memcpy
+(0915) 	for(int i=0;i<4;i++){
+    009A5 2744      CLR	R20
+    009A6 2755      CLR	R21
+    009A7 C00C      RJMP	0x09B4
+(0916) 		EEPROM_write(21+i,storage[i]);
+    009A8 EE89      LDI	R24,0xE9
+    009A9 E090      LDI	R25,0
+    009AA 01FA      MOVW	R30,R20
+    009AB 0FE8      ADD	R30,R24
+    009AC 1FF9      ADC	R31,R25
+    009AD 8120      LD	R18,Z
+    009AE 018A      MOVW	R16,R20
+    009AF 5E0B      SUBI	R16,0xEB
+    009B0 4F1F      SBCI	R17,0xFF
+    009B1 DF0C      RCALL	_EEPROM_write
+    009B2 5F4F      SUBI	R20,0xFF
+    009B3 4F5F      SBCI	R21,0xFF
+    009B4 E084      LDI	R24,4
+    009B5 E090      LDI	R25,0
+    009B6 1748      CP	R20,R24
+    009B7 0759      CPC	R21,R25
+    009B8 F37C      BLT	0x09A8
+(0917) 	}
+(0918) 	memcpy(storage,&bslb,4);
+    009B9 8399      STD	Y+1,R25
+    009BA 8388      ST	Y,R24
+    009BB E824      LDI	R18,0x84
+    009BC E030      LDI	R19,0
+    009BD EE09      LDI	R16,0xE9
+    009BE E010      LDI	R17,0
+    009BF D266      RCALL	<LIBRARY>|_memcpy
+(0919) 	for(int i=0;i<4;i++){
+    009C0 2744      CLR	R20
+    009C1 2755      CLR	R21
+    009C2 C00C      RJMP	0x09CF
+(0920) 		EEPROM_write(25+i,storage[i]);
+    009C3 EE89      LDI	R24,0xE9
+    009C4 E090      LDI	R25,0
+    009C5 01FA      MOVW	R30,R20
+    009C6 0FE8      ADD	R30,R24
+    009C7 1FF9      ADC	R31,R25
+    009C8 8120      LD	R18,Z
+    009C9 018A      MOVW	R16,R20
+    009CA 5E07      SUBI	R16,0xE7
+    009CB 4F1F      SBCI	R17,0xFF
+    009CC DEF1      RCALL	_EEPROM_write
+    009CD 5F4F      SUBI	R20,0xFF
+    009CE 4F5F      SBCI	R21,0xFF
+    009CF E084      LDI	R24,4
+    009D0 E090      LDI	R25,0
+    009D1 1748      CP	R20,R24
+    009D2 0759      CPC	R21,R25
+    009D3 F37C      BLT	0x09C3
+(0921) 	}
+(0922) 	memcpy(storage,&bslm,4);
+    009D4 8399      STD	Y+1,R25
+    009D5 8388      ST	Y,R24
+    009D6 E820      LDI	R18,0x80
+    009D7 E030      LDI	R19,0
+    009D8 EE09      LDI	R16,0xE9
+    009D9 E010      LDI	R17,0
+    009DA D24B      RCALL	<LIBRARY>|_memcpy
+(0923) 	for(int i=0;i<4;i++){
+    009DB 2744      CLR	R20
+    009DC 2755      CLR	R21
+    009DD C00C      RJMP	0x09EA
+(0924) 		EEPROM_write(29+i,storage[i]);
+    009DE EE89      LDI	R24,0xE9
+    009DF E090      LDI	R25,0
+    009E0 01FA      MOVW	R30,R20
+    009E1 0FE8      ADD	R30,R24
+    009E2 1FF9      ADC	R31,R25
+    009E3 8120      LD	R18,Z
+    009E4 018A      MOVW	R16,R20
+    009E5 5E03      SUBI	R16,0xE3
+    009E6 4F1F      SBCI	R17,0xFF
+    009E7 DED6      RCALL	_EEPROM_write
+    009E8 5F4F      SUBI	R20,0xFF
+    009E9 4F5F      SBCI	R21,0xFF
+    009EA E084      LDI	R24,4
+    009EB E090      LDI	R25,0
+    009EC 1748      CP	R20,R24
+    009ED 0759      CPC	R21,R25
+    009EE F37C      BLT	0x09DE
+(0925) 	}
+(0926) 	memcpy(storage,&mcrb,4);
+    009EF 8399      STD	Y+1,R25
+    009F0 8388      ST	Y,R24
+    009F1 E82C      LDI	R18,0x8C
+    009F2 E030      LDI	R19,0
+    009F3 EE09      LDI	R16,0xE9
+    009F4 E010      LDI	R17,0
+    009F5 D230      RCALL	<LIBRARY>|_memcpy
+(0927) 	for(int i=0;i<4;i++){
+    009F6 2744      CLR	R20
+    009F7 2755      CLR	R21
+    009F8 C00C      RJMP	0x0A05
+(0928) 		EEPROM_write(33+i,storage[i]);
+    009F9 EE89      LDI	R24,0xE9
+    009FA E090      LDI	R25,0
+    009FB 01FA      MOVW	R30,R20
+    009FC 0FE8      ADD	R30,R24
+    009FD 1FF9      ADC	R31,R25
+    009FE 8120      LD	R18,Z
+    009FF 018A      MOVW	R16,R20
+    00A00 5D0F      SUBI	R16,0xDF
+    00A01 4F1F      SBCI	R17,0xFF
+    00A02 DEBB      RCALL	_EEPROM_write
+    00A03 5F4F      SUBI	R20,0xFF
+    00A04 4F5F      SBCI	R21,0xFF
+    00A05 E084      LDI	R24,4
+    00A06 E090      LDI	R25,0
+    00A07 1748      CP	R20,R24
+    00A08 0759      CPC	R21,R25
+    00A09 F37C      BLT	0x09F9
+(0929) 	}
+(0930) 	memcpy(storage,&mcrm,4);
+    00A0A 8399      STD	Y+1,R25
+    00A0B 8388      ST	Y,R24
+    00A0C E828      LDI	R18,0x88
+    00A0D E030      LDI	R19,0
+    00A0E EE09      LDI	R16,0xE9
+    00A0F E010      LDI	R17,0
+    00A10 D215      RCALL	<LIBRARY>|_memcpy
+(0931) 	for(int i=0;i<4;i++){
+    00A11 2744      CLR	R20
+    00A12 2755      CLR	R21
+    00A13 C00C      RJMP	0x0A20
+(0932) 		EEPROM_write(37+i,storage[i]);
+    00A14 EE89      LDI	R24,0xE9
+    00A15 E090      LDI	R25,0
+    00A16 01FA      MOVW	R30,R20
+    00A17 0FE8      ADD	R30,R24
+    00A18 1FF9      ADC	R31,R25
+    00A19 8120      LD	R18,Z
+    00A1A 018A      MOVW	R16,R20
+    00A1B 5D0B      SUBI	R16,0xDB
+    00A1C 4F1F      SBCI	R17,0xFF
+    00A1D DEA0      RCALL	_EEPROM_write
+    00A1E 5F4F      SUBI	R20,0xFF
+    00A1F 4F5F      SBCI	R21,0xFF
+    00A20 E084      LDI	R24,4
+    00A21 E090      LDI	R25,0
+    00A22 1748      CP	R20,R24
+    00A23 0759      CPC	R21,R25
+    00A24 F37C      BLT	0x0A14
+(0933) 	}
+(0934) 	memcpy(storage,&mcgb,4);
+    00A25 8399      STD	Y+1,R25
+    00A26 8388      ST	Y,R24
+    00A27 E924      LDI	R18,0x94
+    00A28 E030      LDI	R19,0
+    00A29 EE09      LDI	R16,0xE9
+    00A2A E010      LDI	R17,0
+    00A2B D1FA      RCALL	<LIBRARY>|_memcpy
+(0935) 	for(int i=0;i<4;i++){
+    00A2C 2744      CLR	R20
+    00A2D 2755      CLR	R21
+    00A2E C00C      RJMP	0x0A3B
+(0936) 		EEPROM_write(41+i,storage[i]);
+    00A2F EE89      LDI	R24,0xE9
+    00A30 E090      LDI	R25,0
+    00A31 01FA      MOVW	R30,R20
+    00A32 0FE8      ADD	R30,R24
+    00A33 1FF9      ADC	R31,R25
+    00A34 8120      LD	R18,Z
+    00A35 018A      MOVW	R16,R20
+    00A36 5D07      SUBI	R16,0xD7
+    00A37 4F1F      SBCI	R17,0xFF
+    00A38 DE85      RCALL	_EEPROM_write
+    00A39 5F4F      SUBI	R20,0xFF
+    00A3A 4F5F      SBCI	R21,0xFF
+    00A3B E084      LDI	R24,4
+    00A3C E090      LDI	R25,0
+    00A3D 1748      CP	R20,R24
+    00A3E 0759      CPC	R21,R25
+    00A3F F37C      BLT	0x0A2F
+(0937) 	}
+(0938) 	memcpy(storage,&mcgm,4);
+    00A40 8399      STD	Y+1,R25
+    00A41 8388      ST	Y,R24
+    00A42 E920      LDI	R18,0x90
+    00A43 E030      LDI	R19,0
+    00A44 EE09      LDI	R16,0xE9
+    00A45 E010      LDI	R17,0
+    00A46 D1DF      RCALL	<LIBRARY>|_memcpy
+(0939) 	for(int i=0;i<4;i++){
+    00A47 2744      CLR	R20
+    00A48 2755      CLR	R21
+    00A49 C00C      RJMP	0x0A56
+(0940) 		EEPROM_write(45+i,storage[i]);
+    00A4A EE89      LDI	R24,0xE9
+    00A4B E090      LDI	R25,0
+    00A4C 01FA      MOVW	R30,R20
+    00A4D 0FE8      ADD	R30,R24
+    00A4E 1FF9      ADC	R31,R25
+    00A4F 8120      LD	R18,Z
+    00A50 018A      MOVW	R16,R20
+    00A51 5D03      SUBI	R16,0xD3
+    00A52 4F1F      SBCI	R17,0xFF
+    00A53 DE6A      RCALL	_EEPROM_write
+    00A54 5F4F      SUBI	R20,0xFF
+    00A55 4F5F      SBCI	R21,0xFF
+    00A56 E084      LDI	R24,4
+    00A57 E090      LDI	R25,0
+    00A58 1748      CP	R20,R24
+    00A59 0759      CPC	R21,R25
+    00A5A F37C      BLT	0x0A4A
+(0941) 	}
+(0942) 	memcpy(storage,&mcbb,4);
+    00A5B 8399      STD	Y+1,R25
+    00A5C 8388      ST	Y,R24
+    00A5D E92C      LDI	R18,0x9C
+    00A5E E030      LDI	R19,0
+    00A5F EE09      LDI	R16,0xE9
+    00A60 E010      LDI	R17,0
+    00A61 D1C4      RCALL	<LIBRARY>|_memcpy
+(0943) 	for(int i=0;i<4;i++){
+    00A62 2744      CLR	R20
+    00A63 2755      CLR	R21
+    00A64 C00C      RJMP	0x0A71
+(0944) 		EEPROM_write(49+i,storage[i]);
+    00A65 EE89      LDI	R24,0xE9
+    00A66 E090      LDI	R25,0
+    00A67 01FA      MOVW	R30,R20
+    00A68 0FE8      ADD	R30,R24
+    00A69 1FF9      ADC	R31,R25
+    00A6A 8120      LD	R18,Z
+    00A6B 018A      MOVW	R16,R20
+    00A6C 5C0F      SUBI	R16,0xCF
+    00A6D 4F1F      SBCI	R17,0xFF
+    00A6E DE4F      RCALL	_EEPROM_write
+    00A6F 5F4F      SUBI	R20,0xFF
+    00A70 4F5F      SBCI	R21,0xFF
+    00A71 E084      LDI	R24,4
+    00A72 E090      LDI	R25,0
+    00A73 1748      CP	R20,R24
+    00A74 0759      CPC	R21,R25
+    00A75 F37C      BLT	0x0A65
+(0945) 	}
+(0946) 	memcpy(storage,&mcbm,4);
+    00A76 8399      STD	Y+1,R25
+    00A77 8388      ST	Y,R24
+    00A78 E928      LDI	R18,0x98
+    00A79 E030      LDI	R19,0
+    00A7A EE09      LDI	R16,0xE9
+    00A7B E010      LDI	R17,0
+    00A7C D1A9      RCALL	<LIBRARY>|_memcpy
+(0947) 	for(int i=0;i<4;i++){
+    00A7D 2744      CLR	R20
+    00A7E 2755      CLR	R21
+    00A7F C00C      RJMP	0x0A8C
+(0948) 		EEPROM_write(53+i,storage[i]);
+    00A80 EE89      LDI	R24,0xE9
+    00A81 E090      LDI	R25,0
+    00A82 01FA      MOVW	R30,R20
+    00A83 0FE8      ADD	R30,R24
+    00A84 1FF9      ADC	R31,R25
+    00A85 8120      LD	R18,Z
+    00A86 018A      MOVW	R16,R20
+    00A87 5C0B      SUBI	R16,0xCB
+    00A88 4F1F      SBCI	R17,0xFF
+    00A89 DE34      RCALL	_EEPROM_write
+    00A8A 5F4F      SUBI	R20,0xFF
+    00A8B 4F5F      SBCI	R21,0xFF
+    00A8C E084      LDI	R24,4
+    00A8D E090      LDI	R25,0
+    00A8E 1748      CP	R20,R24
+    00A8F 0759      CPC	R21,R25
+    00A90 F37C      BLT	0x0A80
+(0949) 	}
+(0950) 	memcpy(storage,&mchb,4);
+    00A91 8399      STD	Y+1,R25
+    00A92 8388      ST	Y,R24
+    00A93 EA24      LDI	R18,0xA4
+    00A94 E030      LDI	R19,0
+    00A95 EE09      LDI	R16,0xE9
+    00A96 E010      LDI	R17,0
+    00A97 D18E      RCALL	<LIBRARY>|_memcpy
+(0951) 	for(int i=0;i<4;i++){
+    00A98 2744      CLR	R20
+    00A99 2755      CLR	R21
+    00A9A C00C      RJMP	0x0AA7
+(0952) 		EEPROM_write(57+i,storage[i]);
+    00A9B EE89      LDI	R24,0xE9
+    00A9C E090      LDI	R25,0
+    00A9D 01FA      MOVW	R30,R20
+    00A9E 0FE8      ADD	R30,R24
+    00A9F 1FF9      ADC	R31,R25
+    00AA0 8120      LD	R18,Z
+    00AA1 018A      MOVW	R16,R20
+    00AA2 5C07      SUBI	R16,0xC7
+    00AA3 4F1F      SBCI	R17,0xFF
+    00AA4 DE19      RCALL	_EEPROM_write
+    00AA5 5F4F      SUBI	R20,0xFF
+    00AA6 4F5F      SBCI	R21,0xFF
+    00AA7 E084      LDI	R24,4
+    00AA8 E090      LDI	R25,0
+    00AA9 1748      CP	R20,R24
+    00AAA 0759      CPC	R21,R25
+    00AAB F37C      BLT	0x0A9B
+(0953) 	}
+(0954) 	memcpy(storage,&mchm,4);
+    00AAC 8399      STD	Y+1,R25
+    00AAD 8388      ST	Y,R24
+    00AAE EA20      LDI	R18,0xA0
+    00AAF E030      LDI	R19,0
+    00AB0 EE09      LDI	R16,0xE9
+    00AB1 E010      LDI	R17,0
+    00AB2 D173      RCALL	<LIBRARY>|_memcpy
+(0955) 	for(int i=0;i<4;i++){
+    00AB3 2744      CLR	R20
+    00AB4 2755      CLR	R21
+    00AB5 C00C      RJMP	0x0AC2
+(0956) 		EEPROM_write(61+i,storage[i]);
+    00AB6 EE89      LDI	R24,0xE9
+    00AB7 E090      LDI	R25,0
+    00AB8 01FA      MOVW	R30,R20
+    00AB9 0FE8      ADD	R30,R24
+    00ABA 1FF9      ADC	R31,R25
+    00ABB 8120      LD	R18,Z
+    00ABC 018A      MOVW	R16,R20
+    00ABD 5C03      SUBI	R16,0xC3
+    00ABE 4F1F      SBCI	R17,0xFF
+    00ABF DDFE      RCALL	_EEPROM_write
+    00AC0 5F4F      SUBI	R20,0xFF
+    00AC1 4F5F      SBCI	R21,0xFF
+    00AC2 E084      LDI	R24,4
+    00AC3 E090      LDI	R25,0
+    00AC4 1748      CP	R20,R24
+    00AC5 0759      CPC	R21,R25
+    00AC6 F37C      BLT	0x0AB6
+(0957) 	}
+(0958) 	memcpy(storage,&mcsb,4);
+    00AC7 8399      STD	Y+1,R25
+    00AC8 8388      ST	Y,R24
+    00AC9 EA2C      LDI	R18,0xAC
+    00ACA E030      LDI	R19,0
+    00ACB EE09      LDI	R16,0xE9
+    00ACC E010      LDI	R17,0
+    00ACD D158      RCALL	<LIBRARY>|_memcpy
+(0959) 	for(int i=0;i<4;i++){
+    00ACE 2744      CLR	R20
+    00ACF 2755      CLR	R21
+    00AD0 C00C      RJMP	0x0ADD
+(0960) 		EEPROM_write(65+i,storage[i]);
+    00AD1 EE89      LDI	R24,0xE9
+    00AD2 E090      LDI	R25,0
+    00AD3 01FA      MOVW	R30,R20
+    00AD4 0FE8      ADD	R30,R24
+    00AD5 1FF9      ADC	R31,R25
+    00AD6 8120      LD	R18,Z
+    00AD7 018A      MOVW	R16,R20
+    00AD8 5B0F      SUBI	R16,0xBF
+    00AD9 4F1F      SBCI	R17,0xFF
+    00ADA DDE3      RCALL	_EEPROM_write
+    00ADB 5F4F      SUBI	R20,0xFF
+    00ADC 4F5F      SBCI	R21,0xFF
+    00ADD E084      LDI	R24,4
+    00ADE E090      LDI	R25,0
+    00ADF 1748      CP	R20,R24
+    00AE0 0759      CPC	R21,R25
+    00AE1 F37C      BLT	0x0AD1
+(0961) 	}
+(0962) 	memcpy(storage,&mcsm,4);
+    00AE2 8399      STD	Y+1,R25
+    00AE3 8388      ST	Y,R24
+    00AE4 EA28      LDI	R18,0xA8
+    00AE5 E030      LDI	R19,0
+    00AE6 EE09      LDI	R16,0xE9
+    00AE7 E010      LDI	R17,0
+    00AE8 D13D      RCALL	<LIBRARY>|_memcpy
+(0963) 	for(int i=0;i<4;i++){
+    00AE9 2744      CLR	R20
+    00AEA 2755      CLR	R21
+    00AEB C00C      RJMP	0x0AF8
+(0964) 		EEPROM_write(69+i,storage[i]);
+    00AEC EE89      LDI	R24,0xE9
+    00AED E090      LDI	R25,0
+    00AEE 01FA      MOVW	R30,R20
+    00AEF 0FE8      ADD	R30,R24
+    00AF0 1FF9      ADC	R31,R25
+    00AF1 8120      LD	R18,Z
+    00AF2 018A      MOVW	R16,R20
+    00AF3 5B0B      SUBI	R16,0xBB
+    00AF4 4F1F      SBCI	R17,0xFF
+    00AF5 DDC8      RCALL	_EEPROM_write
+    00AF6 5F4F      SUBI	R20,0xFF
+    00AF7 4F5F      SBCI	R21,0xFF
+    00AF8 E084      LDI	R24,4
+    00AF9 E090      LDI	R25,0
+    00AFA 1748      CP	R20,R24
+    00AFB 0759      CPC	R21,R25
+    00AFC F37C      BLT	0x0AEC
+(0965) 	}
+(0966) 	memcpy(storage,&mcvb,4);
+    00AFD 8399      STD	Y+1,R25
+    00AFE 8388      ST	Y,R24
+    00AFF EB24      LDI	R18,0xB4
+    00B00 E030      LDI	R19,0
+    00B01 EE09      LDI	R16,0xE9
+    00B02 E010      LDI	R17,0
+    00B03 D122      RCALL	<LIBRARY>|_memcpy
+(0967) 	for(int i=0;i<4;i++){
+    00B04 2744      CLR	R20
+    00B05 2755      CLR	R21
+    00B06 C00C      RJMP	0x0B13
+(0968) 		EEPROM_write(73+i,storage[i]);
+    00B07 EE89      LDI	R24,0xE9
+    00B08 E090      LDI	R25,0
+    00B09 01FA      MOVW	R30,R20
+    00B0A 0FE8      ADD	R30,R24
+    00B0B 1FF9      ADC	R31,R25
+    00B0C 8120      LD	R18,Z
+    00B0D 018A      MOVW	R16,R20
+    00B0E 5B07      SUBI	R16,0xB7
+    00B0F 4F1F      SBCI	R17,0xFF
+    00B10 DDAD      RCALL	_EEPROM_write
+    00B11 5F4F      SUBI	R20,0xFF
+    00B12 4F5F      SBCI	R21,0xFF
+    00B13 E084      LDI	R24,4
+    00B14 E090      LDI	R25,0
+    00B15 1748      CP	R20,R24
+    00B16 0759      CPC	R21,R25
+    00B17 F37C      BLT	0x0B07
+(0969) 	}
+(0970) 	memcpy(storage,&mcvm,4);
+    00B18 8399      STD	Y+1,R25
+    00B19 8388      ST	Y,R24
+    00B1A EB20      LDI	R18,0xB0
+    00B1B E030      LDI	R19,0
+    00B1C EE09      LDI	R16,0xE9
+    00B1D E010      LDI	R17,0
+    00B1E D107      RCALL	<LIBRARY>|_memcpy
+(0971) 	for(int i=0;i<4;i++){
+    00B1F 2744      CLR	R20
+    00B20 2755      CLR	R21
+    00B21 C00C      RJMP	0x0B2E
+(0972) 		EEPROM_write(77+i,storage[i]);
+    00B22 EE89      LDI	R24,0xE9
+    00B23 E090      LDI	R25,0
+    00B24 01FA      MOVW	R30,R20
+    00B25 0FE8      ADD	R30,R24
+    00B26 1FF9      ADC	R31,R25
+    00B27 8120      LD	R18,Z
+    00B28 018A      MOVW	R16,R20
+    00B29 5B03      SUBI	R16,0xB3
+    00B2A 4F1F      SBCI	R17,0xFF
+    00B2B DD92      RCALL	_EEPROM_write
+    00B2C 5F4F      SUBI	R20,0xFF
+    00B2D 4F5F      SBCI	R21,0xFF
+    00B2E E084      LDI	R24,4
+    00B2F E090      LDI	R25,0
+    00B30 1748      CP	R20,R24
+    00B31 0759      CPC	R21,R25
+    00B32 F37C      BLT	0x0B22
+(0973) 	}
+(0974) 
+(0975)     //Matriz de correccion HSV
+(0976)     EEPROM_write(200, MHSV11>>8);          //parte alta
+    00B33 9120 00B8 LDS	R18,_MHSV11
+    00B35 9130 00B9 LDS	R19,_MHSV11+1
+    00B37 2F23      MOV	R18,R19
+    00B38 2733      CLR	R19
+    00B39 FD27      SBRC	R18,7
+    00B3A 9530      COM	R19
+    00B3B EC08      LDI	R16,0xC8
+    00B3C E010      LDI	R17,0
+    00B3D DD80      RCALL	_EEPROM_write
+(0977)     EEPROM_write(201, (MHSV11&0x00FF));    //parte baja
+    00B3E 9120 00B8 LDS	R18,_MHSV11
+    00B40 7F2F      ANDI	R18,0xFF
+    00B41 EC09      LDI	R16,0xC9
+    00B42 E010      LDI	R17,0
+    00B43 DD7A      RCALL	_EEPROM_write
+(0978)     EEPROM_write(202, MHSV12>>8);          //parte alta
+    00B44 9120 00BA LDS	R18,_MHSV12
+    00B46 9130 00BB LDS	R19,_MHSV12+1
+    00B48 2F23      MOV	R18,R19
+    00B49 2733      CLR	R19
+    00B4A FD27      SBRC	R18,7
+    00B4B 9530      COM	R19
+    00B4C EC0A      LDI	R16,0xCA
+    00B4D E010      LDI	R17,0
+    00B4E DD6F      RCALL	_EEPROM_write
+(0979)     EEPROM_write(203, (MHSV12&0x00FF));    //parte baja
+    00B4F 9120 00BA LDS	R18,_MHSV12
+    00B51 7F2F      ANDI	R18,0xFF
+    00B52 EC0B      LDI	R16,0xCB
+    00B53 E010      LDI	R17,0
+    00B54 DD69      RCALL	_EEPROM_write
+(0980)     EEPROM_write(204, MHSV13>>8);          //parte alta
+    00B55 9120 00BC LDS	R18,_MHSV13
+    00B57 9130 00BD LDS	R19,_MHSV13+1
+    00B59 2F23      MOV	R18,R19
+    00B5A 2733      CLR	R19
+    00B5B FD27      SBRC	R18,7
+    00B5C 9530      COM	R19
+    00B5D EC0C      LDI	R16,0xCC
+    00B5E E010      LDI	R17,0
+    00B5F DD5E      RCALL	_EEPROM_write
+(0981)     EEPROM_write(205, (MHSV13&0x00FF));    //parte baja
+    00B60 9120 00BC LDS	R18,_MHSV13
+    00B62 7F2F      ANDI	R18,0xFF
+    00B63 EC0D      LDI	R16,0xCD
+    00B64 E010      LDI	R17,0
+    00B65 DD58      RCALL	_EEPROM_write
+(0982)     EEPROM_write(206, MHSV21>>8);          //parte alta
+    00B66 9120 00BE LDS	R18,_MHSV21
+    00B68 9130 00BF LDS	R19,_MHSV21+1
+    00B6A 2F23      MOV	R18,R19
+    00B6B 2733      CLR	R19
+    00B6C FD27      SBRC	R18,7
+    00B6D 9530      COM	R19
+    00B6E EC0E      LDI	R16,0xCE
+    00B6F E010      LDI	R17,0
+    00B70 DD4D      RCALL	_EEPROM_write
+(0983)     EEPROM_write(207, (MHSV21&0x00FF));    //parte baja
+    00B71 9120 00BE LDS	R18,_MHSV21
+    00B73 7F2F      ANDI	R18,0xFF
+    00B74 EC0F      LDI	R16,0xCF
+    00B75 E010      LDI	R17,0
+    00B76 DD47      RCALL	_EEPROM_write
+(0984)     EEPROM_write(208, MHSV22>>8);          //parte alta
+    00B77 9120 00C0 LDS	R18,_MHSV22
+    00B79 9130 00C1 LDS	R19,_MHSV22+1
+    00B7B 2F23      MOV	R18,R19
+    00B7C 2733      CLR	R19
+    00B7D FD27      SBRC	R18,7
+    00B7E 9530      COM	R19
+    00B7F ED00      LDI	R16,0xD0
+    00B80 E010      LDI	R17,0
+    00B81 DD3C      RCALL	_EEPROM_write
+(0985)     EEPROM_write(209, (MHSV22&0x00FF));    //parte baja
+    00B82 9120 00C0 LDS	R18,_MHSV22
+    00B84 7F2F      ANDI	R18,0xFF
+    00B85 ED01      LDI	R16,0xD1
+    00B86 E010      LDI	R17,0
+    00B87 DD36      RCALL	_EEPROM_write
+(0986)     EEPROM_write(210, MHSV23>>8);          //parte alta
+    00B88 9120 00C2 LDS	R18,_MHSV23
+    00B8A 9130 00C3 LDS	R19,_MHSV23+1
+    00B8C 2F23      MOV	R18,R19
+    00B8D 2733      CLR	R19
+    00B8E FD27      SBRC	R18,7
+    00B8F 9530      COM	R19
+    00B90 ED02      LDI	R16,0xD2
+    00B91 E010      LDI	R17,0
+    00B92 DD2B      RCALL	_EEPROM_write
+(0987)     EEPROM_write(211, (MHSV23&0x00FF));    //parte baja
+    00B93 9120 00C2 LDS	R18,_MHSV23
+    00B95 7F2F      ANDI	R18,0xFF
+    00B96 ED03      LDI	R16,0xD3
+    00B97 E010      LDI	R17,0
+    00B98 DD25      RCALL	_EEPROM_write
+(0988)     EEPROM_write(212, MHSV31>>8);          //parte alta
+    00B99 9120 00C4 LDS	R18,_MHSV31
+    00B9B 9130 00C5 LDS	R19,_MHSV31+1
+    00B9D 2F23      MOV	R18,R19
+    00B9E 2733      CLR	R19
+    00B9F FD27      SBRC	R18,7
+    00BA0 9530      COM	R19
+    00BA1 ED04      LDI	R16,0xD4
+    00BA2 E010      LDI	R17,0
+    00BA3 DD1A      RCALL	_EEPROM_write
+(0989)     EEPROM_write(213, (MHSV31&0x00FF));    //parte baja
+    00BA4 9120 00C4 LDS	R18,_MHSV31
+    00BA6 7F2F      ANDI	R18,0xFF
+    00BA7 ED05      LDI	R16,0xD5
+    00BA8 E010      LDI	R17,0
+    00BA9 DD14      RCALL	_EEPROM_write
+(0990)     EEPROM_write(214, MHSV32>>8);          //parte alta
+    00BAA 9120 00C6 LDS	R18,_MHSV32
+    00BAC 9130 00C7 LDS	R19,_MHSV32+1
+    00BAE 2F23      MOV	R18,R19
+    00BAF 2733      CLR	R19
+    00BB0 FD27      SBRC	R18,7
+    00BB1 9530      COM	R19
+    00BB2 ED06      LDI	R16,0xD6
+    00BB3 E010      LDI	R17,0
+    00BB4 DD09      RCALL	_EEPROM_write
+(0991)     EEPROM_write(215, (MHSV32&0x00FF));    //parte baja
+    00BB5 9120 00C6 LDS	R18,_MHSV32
+    00BB7 7F2F      ANDI	R18,0xFF
+    00BB8 ED07      LDI	R16,0xD7
+    00BB9 E010      LDI	R17,0
+    00BBA DD03      RCALL	_EEPROM_write
+(0992)     EEPROM_write(216, MHSV33>>8);          //parte alta
+    00BBB 9120 00C8 LDS	R18,_MHSV33
+    00BBD 9130 00C9 LDS	R19,_MHSV33+1
+    00BBF 2F23      MOV	R18,R19
+    00BC0 2733      CLR	R19
+    00BC1 FD27      SBRC	R18,7
+    00BC2 9530      COM	R19
+    00BC3 ED08      LDI	R16,0xD8
+    00BC4 E010      LDI	R17,0
+    00BC5 DCF8      RCALL	_EEPROM_write
+(0993)     EEPROM_write(217, (MHSV33&0x00FF));    //parte baja
+    00BC6 9120 00C8 LDS	R18,_MHSV33
+    00BC8 7F2F      ANDI	R18,0xFF
+    00BC9 ED09      LDI	R16,0xD9
+    00BCA E010      LDI	R17,0
+    00BCB DCF2      RCALL	_EEPROM_write
+    00BCC 9622      ADIW	R28,2
+    00BCD 9159      LD	R21,Y+
+    00BCE 9149      LD	R20,Y+
+    00BCF 9508      RET
+(0994) 
+(0995) }
+_int0_isr:
+    00BD0 938A      ST	-Y,R24
+    00BD1 939A      ST	-Y,R25
+    00BD2 B78F      IN	R24,0x3F
+    00BD3 938A      ST	-Y,R24
+(0996) 
+(0997) 
+(0998) 
+(0999) //****************************** INTERRUPCIONES ********************************
+(1000) //-------------------------- FUNCIONES DE INTERRUPCION -------------------------
+(1001) //interrupcion externa 0
+(1002) #pragma interrupt_handler int0_isr:2
+(1003) void int0_isr(void){
+(1004)     ss=1;
+    00BD4 E081      LDI	R24,1
+    00BD5 E090      LDI	R25,0
+    00BD6 9390 0062 STS	_ss+1,R25
+    00BD8 9380 0061 STS	_ss,R24
+    00BDA 9189      LD	R24,Y+
+    00BDB BF8F      OUT	0x3F,R24
+    00BDC 9199      LD	R25,Y+
+    00BDD 9189      LD	R24,Y+
+    00BDE 9518      RETI
+(1005) }
+(1006) //Pin change interrupt 0
+(1007) #pragma interrupt_handler PinCh0_int_isr:3
+(1008) void PinCh0_int_isr(void)
+(1009) { }
+_PinCh0_int_isr:
+    00BDF 9518      RETI
+(1010) //Pin change interrupt 1
+(1011) #pragma interrupt_handler PinCh1_int_isr:4
+(1012) void PinCh1_int_isr(void)
+(1013) { }
+_PinCh1_int_isr:
+    00BE0 9518      RETI
+(1014) //wdt overflow
+(1015) #pragma interrupt_handler wdt_ovf_isr:5
+(1016) void wdt_ovf_isr(void)
+(1017) { }
+_wdt_ovf_isr:
+    00BE1 9518      RETI
+(1018) //timer 1 input capture
+(1019) #pragma interrupt_handler timer1_capt_isr:6
+(1020) void timer1_capt_isr(void)
+(1021) { }
+_timer1_capt_isr:
+    00BE2 9518      RETI
+(1022) //timer 1 comparacion igual A
+(1023) #pragma interrupt_handler timer1_compa_isr:7
+(1024) void timer0_compa_isr(void)
+(1025) { }
+_timer0_compa_isr:
+    00BE3 9518      RETI
+(1026) //timer 1 comparacion igual B
+(1027) #pragma interrupt_handler timer1_compb_isr:8
+(1028) void timer1_compb_isr(void)
+(1029) { }
+_timer1_compb_isr:
+    00BE4 9518      RETI
+(1030) #pragma interrupt_handler timer1_ovf_isr: 9
+(1031) void timer1_ovf_isr(void)
+(1032) { }
+_timer1_ovf_isr:
+    00BE5 9518      RETI
+_timer1_compa_isr:
+    00BE6 922A      ST	-Y,R2
+    00BE7 938A      ST	-Y,R24
+    00BE8 B62F      IN	R2,0x3F
+    00BE9 922A      ST	-Y,R2
+(1033) #pragma interrupt_handler timer0_compa_isr:10 //iv_TIM0_COM
+(1034) void timer1_compa_isr(void)
+(1035) {
+(1036)  //termino el tiempo de comparacion
+(1037)  //TCCR1B = 0x00; //stop timer1
+(1038)  TCCR1B &= ~((1 << CS12) | (1 << CS11) | (1 << CS10));
+    00BEA B58E      IN	R24,0x2E
+    00BEB 7F88      ANDI	R24,0xF8
+    00BEC BD8E      OUT	0x2E,R24
+(1039) 
+(1040)  //TCCR0B = 0x00; //stop timer0
+(1041)  TCCR0B &= ~((1 << CS12) | (1 << CS11) | (1 << CS10));
+    00BED B783      IN	R24,0x33
+    00BEE 7F88      ANDI	R24,0xF8
+    00BEF BF83      OUT	0x33,R24
+(1042) 
+(1043)  //TCCR1A = 0x00;
+(1044) 
+(1045)  if(banConteo==0) //no hay overflow
+    00BF0 9020 019E LDS	R2,_banConteo
+    00BF2 2022      TST	R2
+    00BF3 F421      BNE	0x0BF8
+(1046)  {
+(1047)   conteo=TCNT0;
+    00BF4 B622      IN	R2,0x32
+    00BF5 9220 01AB STS	_conteo,R2
+(1048)  }
+    00BF7 C003      RJMP	0x0BFB
+(1049)  else //overflow: frecia mayor a la capacidad de timer1
+(1050)  {
+(1051)   conteo=0xFF;
+    00BF8 EF8F      LDI	R24,0xFF
+    00BF9 9380 01AB STS	_conteo,R24
+(1052)  }
+(1053)  banConteo=1;
+    00BFB E081      LDI	R24,1
+    00BFC 9380 019E STS	_banConteo,R24
+(1054)  CLI();
+    00BFE 94F8      BCLR	7
+    00BFF 9029      LD	R2,Y+
+    00C00 BE2F      OUT	0x3F,R2
+    00C01 9189      LD	R24,Y+
+    00C02 9029      LD	R2,Y+
+    00C03 9518      RETI
+(1055) }
+(1056) //timer 0 comaracion igual B
+(1057) #pragma interrupt_handler timer0_compb_isr:11
+(1058) void timer0_compb_isr(void)
+(1059) { }
+_timer0_compb_isr:
+    00C04 9518      RETI
+_timer0_ovf_isr:
+    00C05 922A      ST	-Y,R2
+    00C06 938A      ST	-Y,R24
+    00C07 939A      ST	-Y,R25
+    00C08 B62F      IN	R2,0x3F
+    00C09 922A      ST	-Y,R2
+(1060) //timer 0 overflow
+(1061) #pragma interrupt_handler timer0_ovf_isr:12
+(1062) void timer0_ovf_isr(void)
+(1063) {
+(1064)  //TCCR0B = 0x00; //stop timer0
+(1065)  TCCR0B &= ~((1 << CS12) | (1 << CS11) | (1 << CS10)); //stop timer
+    00C0A B783      IN	R24,0x33
+    00C0B 7F88      ANDI	R24,0xF8
+    00C0C BF83      OUT	0x33,R24
+(1066)  //conteo=0xFF;
+(1067)  ovf++;
+    00C0D 9180 0065 LDS	R24,_ovf
+    00C0F 9190 0066 LDS	R25,_ovf+1
+    00C11 9601      ADIW	R24,1
+    00C12 9390 0066 STS	_ovf+1,R25
+    00C14 9380 0065 STS	_ovf,R24
+(1068)  TCNT0=0;
+    00C16 2422      CLR	R2
+    00C17 BE22      OUT	0x32,R2
+(1069)  banConteo=2;   //conteo de frecuencia sobrepasa la capacidad del timer 0
+    00C18 E082      LDI	R24,2
+    00C19 9380 019E STS	_banConteo,R24
+    00C1B 9029      LD	R2,Y+
+    00C1C BE2F      OUT	0x3F,R2
+    00C1D 9199      LD	R25,Y+
+    00C1E 9189      LD	R24,Y+
+    00C1F 9029      LD	R2,Y+
+    00C20 9518      RETI
+(1070) }
+(1071) //comparador analogico
+(1072) #pragma interrupt_handler ana_comp_isr:13
+(1073) void ana_comp_isr(void)
+(1074) { }
+_ana_comp_isr:
+    00C21 9518      RETI
+(1075) //conversion lista ADC
+(1076) #pragma interrupt_handler adc_isr:14
+(1077) void adc_isr(void)
+(1078) { }
+_adc_isr:
+    00C22 9518      RETI
+(1079) //EEPROM listo
+(1080) #pragma interrupt_handler eeprom_ready_isr:15
+(1081) void eeprom_ready_isr(void)
+(1082) { }
+_eeprom_ready_isr:
+    00C23 9518      RETI
+(1083) //USI start
+(1084) #pragma interrupt_handler usi_start_isr:16
+(1085) void usi_start_isr(void)
+(1086) { }
+_usi_start_isr:
+    00C24 9518      RETI
+(1087) //USI overflow
+(1088) #pragma interrupt_handler usi_ovf_isr:17
+(1089) void usi_ovf_isr(void)
+(1090) { }
+_usi_ovf_isr:
+    00C25 9518      RETI
+(1091) 
+(1092) 
+(1093) 
+(1094) 
+(1095) 
+(1096) 
+(1097) 
+(1098) 
+(1099) 
+<LIBRARY>|_memcpy:
+    00C26 2FA0      MOV	R26,R16
+    00C27 2FB1      MOV	R27,R17
+    00C28 2FE2      MOV	R30,R18
+    00C29 2FF3      MOV	R31,R19
+    00C2A 8188      LD	R24,Y
+    00C2B 8199      LDD	R25,Y+1
+    00C2C 3080      CPI	R24,0
+    00C2D 0798      CPC	R25,R24
+    00C2E C003      RJMP	0x0C32
+    00C2F 9001      LD	R0,Z+
+    00C30 920D      ST	X+,R0
+    00C31 9701      SBIW	R24,1
+    00C32 F7E1      BNE	0x0C2F
+    00C33 9508      RET
+push_arg4:
+    00C34 933A      ST	-Y,R19
+    00C35 932A      ST	-Y,R18
+push_arg2:
+    00C36 931A      ST	-Y,R17
+    00C37 930A      ST	-Y,R16
+    00C38 9508      RET
+mod16s:
+    00C39 9468      BSET	6
+    00C3A 92DA      ST	-Y,R13
+    00C3B 2ED1      MOV	R13,R17
+    00C3C C004      RJMP	0x0C41
+div16s:
+    00C3D 94E8      BCLR	6
+    00C3E 92DA      ST	-Y,R13
+    00C3F 2ED1      MOV	R13,R17
+    00C40 26D3      EOR	R13,R19
+    00C41 FF17      SBRS	R17,7
+    00C42 C004      RJMP	0x0C47
+    00C43 9510      COM	R17
+    00C44 9500      COM	R16
+    00C45 5F0F      SUBI	R16,0xFF
+    00C46 4F1F      SBCI	R17,0xFF
+    00C47 FF37      SBRS	R19,7
+    00C48 C004      RJMP	0x0C4D
+    00C49 9530      COM	R19
+    00C4A 9520      COM	R18
+    00C4B 5F2F      SUBI	R18,0xFF
+    00C4C 4F3F      SBCI	R19,0xFF
+    00C4D D00B      RCALL	xdiv16u
+    00C4E FED7      SBRS	R13,7
+    00C4F C004      RJMP	0x0C54
+    00C50 9510      COM	R17
+    00C51 9500      COM	R16
+    00C52 5F0F      SUBI	R16,0xFF
+    00C53 4F1F      SBCI	R17,0xFF
+    00C54 90D9      LD	R13,Y+
+    00C55 9508      RET
+mod16u:
+    00C56 9468      BSET	6
+    00C57 C001      RJMP	xdiv16u
+div16u:
+    00C58 94E8      BCLR	6
+xdiv16u:
+    00C59 92EA      ST	-Y,R14
+    00C5A 92FA      ST	-Y,R15
+    00C5B 938A      ST	-Y,R24
+    00C5C 24EE      CLR	R14
+    00C5D 24FF      CLR	R15
+    00C5E E180      LDI	R24,0x10
+    00C5F 0F00      LSL	R16
+    00C60 1F11      ROL	R17
+    00C61 1CEE      ROL	R14
+    00C62 1CFF      ROL	R15
+    00C63 16E2      CP	R14,R18
+    00C64 06F3      CPC	R15,R19
+    00C65 F018      BCS	0x0C69
+    00C66 1AE2      SUB	R14,R18
+    00C67 0AF3      SBC	R15,R19
+    00C68 9503      INC	R16
+    00C69 958A      DEC	R24
+    00C6A F7A1      BNE	0x0C5F
+    00C6B F416      BRTC	0x0C6E
+    00C6C 2D0E      MOV	R16,R14
+    00C6D 2D1F      MOV	R17,R15
+    00C6E 9189      LD	R24,Y+
+    00C6F 90F9      LD	R15,Y+
+    00C70 90E9      LD	R14,Y+
+    00C71 9508      RET
+pop_xgsetF0FC:
+    00C72 90A9      LD	R10,Y+
+    00C73 90B9      LD	R11,Y+
+    00C74 90C9      LD	R12,Y+
+    00C75 90D9      LD	R13,Y+
+    00C76 90E9      LD	R14,Y+
+    00C77 90F9      LD	R15,Y+
+    00C78 9149      LD	R20,Y+
+    00C79 9159      LD	R21,Y+
+    00C7A 9169      LD	R22,Y+
+    00C7B 9179      LD	R23,Y+
+    00C7C 9508      RET
+push_xgsetF0FC:
+    00C7D 937A      ST	-Y,R23
+    00C7E 936A      ST	-Y,R22
+push_xgset30FC:
+    00C7F 935A      ST	-Y,R21
+    00C80 934A      ST	-Y,R20
+push_xgset00FC:
+    00C81 92FA      ST	-Y,R15
+    00C82 92EA      ST	-Y,R14
+push_xgset003C:
+    00C83 92DA      ST	-Y,R13
+    00C84 92CA      ST	-Y,R12
+    00C85 92BA      ST	-Y,R11
+    00C86 92AA      ST	-Y,R10
+    00C87 9508      RET
+push_xgset300C:
+    00C88 935A      ST	-Y,R21
+    00C89 934A      ST	-Y,R20
+    00C8A 92BA      ST	-Y,R11
+    00C8B 92AA      ST	-Y,R10
+    00C8C 9508      RET
+pop_xgset300C:
+    00C8D 90A9      LD	R10,Y+
+    00C8E 90B9      LD	R11,Y+
+    00C8F 9149      LD	R20,Y+
+    00C90 9159      LD	R21,Y+
+    00C91 9508      RET
+push_xgsetF000:
+    00C92 937A      ST	-Y,R23
+    00C93 936A      ST	-Y,R22
+    00C94 935A      ST	-Y,R21
+    00C95 934A      ST	-Y,R20
+    00C96 9508      RET
+pop_xgsetF000:
+    00C97 9149      LD	R20,Y+
+    00C98 9159      LD	R21,Y+
+    00C99 9169      LD	R22,Y+
+    00C9A 9179      LD	R23,Y+
+    00C9B 9508      RET
+neg32:
+    00C9C 9500      COM	R16
+    00C9D 9510      COM	R17
+    00C9E 9520      COM	R18
+    00C9F 9530      COM	R19
+    00CA0 5F0F      SUBI	R16,0xFF
+    00CA1 4F1F      SBCI	R17,0xFF
+    00CA2 4F2F      SBCI	R18,0xFF
+    00CA3 4F3F      SBCI	R19,0xFF
+    00CA4 9508      RET
+long_prolog:
+    00CA5 928A      ST	-Y,R8
+    00CA6 929A      ST	-Y,R9
+    00CA7 92AA      ST	-Y,R10
+    00CA8 92BA      ST	-Y,R11
+    00CA9 93EA      ST	-Y,R30
+    00CAA 938A      ST	-Y,R24
+    00CAB 939A      ST	-Y,R25
+    00CAC 93AA      ST	-Y,R26
+    00CAD 93BA      ST	-Y,R27
+    00CAE 8589      LDD	R24,Y+9
+    00CAF 859A      LDD	R25,Y+10
+    00CB0 85AB      LDD	R26,Y+11
+    00CB1 85BC      LDD	R27,Y+12
+    00CB2 9508      RET
+long_epilog:
+    00CB3 91B9      LD	R27,Y+
+    00CB4 91A9      LD	R26,Y+
+    00CB5 9199      LD	R25,Y+
+    00CB6 9189      LD	R24,Y+
+    00CB7 91E9      LD	R30,Y+
+    00CB8 90B9      LD	R11,Y+
+    00CB9 90A9      LD	R10,Y+
+    00CBA 9099      LD	R9,Y+
+    00CBB 9089      LD	R8,Y+
+    00CBC 9624      ADIW	R28,4
+    00CBD 9508      RET
+tstzero1:
+    00CBE 27EE      CLR	R30
+    00CBF 2BE0      OR	R30,R16
+    00CC0 2BE1      OR	R30,R17
+    00CC1 2BE2      OR	R30,R18
+    00CC2 2BE3      OR	R30,R19
+    00CC3 9508      RET
+tstzero2:
+    00CC4 27EE      CLR	R30
+    00CC5 2BE8      OR	R30,R24
+    00CC6 2BE9      OR	R30,R25
+    00CC7 2BEA      OR	R30,R26
+    00CC8 2BEB      OR	R30,R27
+    00CC9 9508      RET
+lpm32:
+    00CCA 93EA      ST	-Y,R30
+    00CCB 93FA      ST	-Y,R31
+    00CCC 920A      ST	-Y,R0
+    00CCD 2FE0      MOV	R30,R16
+    00CCE 2FF1      MOV	R31,R17
+    00CCF 95C8      LPM
+    00CD0 2D00      MOV	R16,R0
+    00CD1 9631      ADIW	R30,1
+    00CD2 95C8      LPM
+    00CD3 2D10      MOV	R17,R0
+    00CD4 9631      ADIW	R30,1
+    00CD5 95C8      LPM
+    00CD6 2D20      MOV	R18,R0
+    00CD7 9631      ADIW	R30,1
+    00CD8 95C8      LPM
+    00CD9 2D30      MOV	R19,R0
+    00CDA 9009      LD	R0,Y+
+    00CDB 91F9      LD	R31,Y+
+    00CDC 91E9      LD	R30,Y+
+    00CDD 9508      RET
+mpy16s:
+    00CDE 920A      ST	-Y,R0
+    00CDF 921A      ST	-Y,R1
+    00CE0 2400      CLR	R0
+    00CE1 2411      CLR	R1
+    00CE2 3000      CPI	R16,0
+    00CE3 0701      CPC	R16,R17
+    00CE4 F041      BEQ	0x0CED
+    00CE5 9516      LSR	R17
+    00CE6 9507      ROR	R16
+    00CE7 F410      BCC	0x0CEA
+    00CE8 0E02      ADD	R0,R18
+    00CE9 1E13      ADC	R1,R19
+    00CEA 0F22      LSL	R18
+    00CEB 1F33      ROL	R19
+    00CEC CFF5      RJMP	0x0CE2
+    00CED 2D00      MOV	R16,R0
+    00CEE 2D11      MOV	R17,R1
+    00CEF 9019      LD	R1,Y+
+    00CF0 9009      LD	R0,Y+
+    00CF1 9508      RET
+mpy32u|mpy32s:
+    00CF2 DFB2      RCALL	long_prolog
+    00CF3 DFCA      RCALL	tstzero1
+    00CF4 F0C9      BEQ	0x0D0E
+    00CF5 2488      CLR	R8
+    00CF6 2499      CLR	R9
+    00CF7 24AA      CLR	R10
+    00CF8 24BB      CLR	R11
+    00CF9 DFCA      RCALL	tstzero2
+    00CFA F079      BEQ	0x0D0A
+    00CFB 9536      LSR	R19
+    00CFC 9527      ROR	R18
+    00CFD 9517      ROR	R17
+    00CFE 9507      ROR	R16
+    00CFF F420      BCC	0x0D04
+    00D00 0E88      ADD	R8,R24
+    00D01 1E99      ADC	R9,R25
+    00D02 1EAA      ADC	R10,R26
+    00D03 1EBB      ADC	R11,R27
+    00D04 0F88      LSL	R24
+    00D05 1F99      ROL	R25
+    00D06 1FAA      ROL	R26
+    00D07 1FBB      ROL	R27
+    00D08 DFB5      RCALL	tstzero1
+    00D09 F789      BNE	0x0CFB
+    00D0A 2D08      MOV	R16,R8
+    00D0B 2D19      MOV	R17,R9
+    00D0C 2D2A      MOV	R18,R10
+    00D0D 2D3B      MOV	R19,R11
+    00D0E CFA4      RJMP	long_epilog
+fpsub:
+    00D0F 9468      BSET	6
+    00D10 C001      RJMP	fpadd_alt
+fpadd:
+    00D11 94E8      BCLR	6
+fpadd_alt:
+    00D12 D211      RCALL	saveFPRegs
+    00D13 D1A3      RCALL	unpacks
+    00D14 F409      BNE	0x0D16
+    00D15 C043      RJMP	0x0D59
+    00D16 2CE6      MOV	R14,R6
+    00D17 2CD5      MOV	R13,R5
+    00D18 2CC4      MOV	R12,R4
+    00D19 2EB3      MOV	R11,R19
+    00D1A 2EA2      MOV	R10,R18
+    00D1B 2E91      MOV	R9,R17
+    00D1C 2E80      MOV	R8,R16
+    00D1D 8100      LD	R16,Z
+    00D1E 8111      LDD	R17,Z+1
+    00D1F 8122      LDD	R18,Z+2
+    00D20 8133      LDD	R19,Z+3
+    00D21 D195      RCALL	unpacks
+    00D22 F409      BNE	0x0D24
+    00D23 C03F      RJMP	0x0D63
+    00D24 2D84      MOV	R24,R4
+    00D25 2D95      MOV	R25,R5
+    00D26 198C      SUB	R24,R12
+    00D27 099D      SBC	R25,R13
+    00D28 F0B9      BEQ	0x0D40
+    00D29 F472      BPL	0x0D38
+    00D2A 9590      COM	R25
+    00D2B 9580      COM	R24
+    00D2C 9601      ADIW	R24,1
+    00D2D 2C4C      MOV	R4,R12
+    00D2E 2C5D      MOV	R5,R13
+    00D2F 3188      CPI	R24,0x18
+    00D30 F590      BCC	0x0D63
+    00D31 9535      ASR	R19
+    00D32 9527      ROR	R18
+    00D33 9517      ROR	R17
+    00D34 9507      ROR	R16
+    00D35 9701      SBIW	R24,1
+    00D36 F7D1      BNE	0x0D31
+    00D37 C008      RJMP	0x0D40
+    00D38 3188      CPI	R24,0x18
+    00D39 F4F8      BCC	0x0D59
+    00D3A 94B5      ASR	R11
+    00D3B 94A7      ROR	R10
+    00D3C 9497      ROR	R9
+    00D3D 9487      ROR	R8
+    00D3E 9701      SBIW	R24,1
+    00D3F F7D1      BNE	0x0D3A
+    00D40 2466      CLR	R6
+    00D41 F02E      BRTS	0x0D47
+    00D42 0D08      ADD	R16,R8
+    00D43 1D19      ADC	R17,R9
+    00D44 1D2A      ADC	R18,R10
+    00D45 1D3B      ADC	R19,R11
+    00D46 C009      RJMP	0x0D50
+    00D47 1A80      SUB	R8,R16
+    00D48 0A91      SBC	R9,R17
+    00D49 0AA2      SBC	R10,R18
+    00D4A 0AB3      SBC	R11,R19
+    00D4B 2D08      MOV	R16,R8
+    00D4C 2D19      MOV	R17,R9
+    00D4D 2D2A      MOV	R18,R10
+    00D4E 2D3B      MOV	R19,R11
+    00D4F 2333      TST	R19
+    00D50 F41A      BPL	0x0D54
+    00D51 DF4A      RCALL	neg32
+    00D52 E880      LDI	R24,0x80
+    00D53 2E68      MOV	R6,R24
+    00D54 D18A      RCALL	normalize_and_pack
+    00D55 C001      RJMP	0x0D57
+    00D56 D1BD      RCALL	pack
+    00D57 D1DB      RCALL	restoreFPRegs
+    00D58 9508      RET
+    00D59 8100      LD	R16,Z
+    00D5A 8111      LDD	R17,Z+1
+    00D5B 8122      LDD	R18,Z+2
+    00D5C 8133      LDD	R19,Z+3
+    00D5D F7CE      BRTC	0x0D57
+    00D5E D15F      RCALL	tstR16_R19
+    00D5F F3B9      BEQ	0x0D57
+    00D60 E880      LDI	R24,0x80
+    00D61 2738      EOR	R19,R24
+    00D62 CFF4      RJMP	0x0D57
+    00D63 2D08      MOV	R16,R8
+    00D64 2D19      MOV	R17,R9
+    00D65 2D2A      MOV	R18,R10
+    00D66 2D3B      MOV	R19,R11
+    00D67 2C4C      MOV	R4,R12
+    00D68 2C5D      MOV	R5,R13
+    00D69 2C6E      MOV	R6,R14
+    00D6A 2333      TST	R19
+    00D6B F752      BPL	0x0D56
+    00D6C DF2F      RCALL	neg32
+    00D6D E880      LDI	R24,0x80
+    00D6E 2E68      MOV	R6,R24
+    00D6F CFE6      RJMP	0x0D56
+fpadd1:
+    00D70 93FA      ST	-Y,R31
+    00D71 93EA      ST	-Y,R30
+    00D72 81EA      LDD	R30,Y+2
+    00D73 81FB      LDD	R31,Y+3
+    00D74 DF9C      RCALL	fpadd
+    00D75 91E9      LD	R30,Y+
+    00D76 91F9      LD	R31,Y+
+    00D77 9622      ADIW	R28,2
+    00D78 9508      RET
+fpadd2:
+    00D79 93FA      ST	-Y,R31
+    00D7A 93EA      ST	-Y,R30
+    00D7B 2FEC      MOV	R30,R28
+    00D7C 2FFD      MOV	R31,R29
+    00D7D 9632      ADIW	R30,2
+    00D7E DF92      RCALL	fpadd
+    00D7F 91E9      LD	R30,Y+
+    00D80 91F9      LD	R31,Y+
+    00D81 9624      ADIW	R28,4
+    00D82 9508      RET
+fpint:
+    00D83 924A      ST	-Y,R4
+    00D84 925A      ST	-Y,R5
+    00D85 926A      ST	-Y,R6
+    00D86 938A      ST	-Y,R24
+    00D87 D13E      RCALL	unpacku
+    00D88 F111      BEQ	0x0DAB
+    00D89 2055      TST	R5
+    00D8A F0E2      BMI	0x0DA7
+    00D8B E18F      LDI	R24,0x1F
+    00D8C 1648      CP	R4,R24
+    00D8D F4C0      BCC	0x0DA6
+    00D8E E187      LDI	R24,0x17
+    00D8F 1648      CP	R4,R24
+    00D90 F0D1      BEQ	0x0DAB
+    00D91 F458      BCC	0x0D9D
+    00D92 9441      NEG	R4
+    00D93 EE89      LDI	R24,0xE9
+    00D94 1A48      SUB	R4,R24
+    00D95 C005      RJMP	0x0D9B
+    00D96 9535      ASR	R19
+    00D97 9527      ROR	R18
+    00D98 9517      ROR	R17
+    00D99 9507      ROR	R16
+    00D9A 944A      DEC	R4
+    00D9B F7D1      BNE	0x0D96
+    00D9C C00E      RJMP	0x0DAB
+    00D9D E187      LDI	R24,0x17
+    00D9E 1A48      SUB	R4,R24
+    00D9F 0F00      LSL	R16
+    00DA0 1F11      ROL	R17
+    00DA1 1F22      ROL	R18
+    00DA2 1F33      ROL	R19
+    00DA3 944A      DEC	R4
+    00DA4 F7D1      BNE	0x0D9F
+    00DA5 C005      RJMP	0x0DAB
+    00DA6 E73F      LDI	R19,0x7F
+    00DA7 2F23      MOV	R18,R19
+    00DA8 2F13      MOV	R17,R19
+    00DA9 2F03      MOV	R16,R19
+    00DAA C003      RJMP	0x0DAE
+    00DAB 2066      TST	R6
+    00DAC F009      BEQ	0x0DAE
+    00DAD DEEE      RCALL	neg32
+    00DAE 9189      LD	R24,Y+
+    00DAF 9069      LD	R6,Y+
+    00DB0 9059      LD	R5,Y+
+    00DB1 9049      LD	R4,Y+
+    00DB2 9508      RET
+uint2fp:
+    00DB3 9468      BSET	6
+    00DB4 C001      RJMP	0x0DB6
+int2fp:
+    00DB5 94E8      BCLR	6
+    00DB6 2722      CLR	R18
+    00DB7 2733      CLR	R19
+    00DB8 F046      BRTS	0x0DC1
+    00DB9 FD17      SBRC	R17,7
+    00DBA 9520      COM	R18
+    00DBB FD17      SBRC	R17,7
+    00DBC 9530      COM	R19
+    00DBD C003      RJMP	0x0DC1
+ulong2fp:
+    00DBE 9468      BSET	6
+    00DBF C001      RJMP	0x0DC1
+long2fp:
+    00DC0 94E8      BCLR	6
+    00DC1 924A      ST	-Y,R4
+    00DC2 925A      ST	-Y,R5
+    00DC3 926A      ST	-Y,R6
+    00DC4 938A      ST	-Y,R24
+    00DC5 E187      LDI	R24,0x17
+    00DC6 2E48      MOV	R4,R24
+    00DC7 2455      CLR	R5
+    00DC8 2466      CLR	R6
+    00DC9 F02E      BRTS	0x0DCF
+    00DCA 2333      TST	R19
+    00DCB F41A      BPL	0x0DCF
+    00DCC DECF      RCALL	neg32
+    00DCD E880      LDI	R24,0x80
+    00DCE 2E68      MOV	R6,R24
+    00DCF D10F      RCALL	normalize_and_pack
+    00DD0 9189      LD	R24,Y+
+    00DD1 9069      LD	R6,Y+
+    00DD2 9059      LD	R5,Y+
+    00DD3 9049      LD	R4,Y+
+    00DD4 9508      RET
+fpdiv1:
+    00DD5 93FA      ST	-Y,R31
+    00DD6 93EA      ST	-Y,R30
+    00DD7 81EA      LDD	R30,Y+2
+    00DD8 81FB      LDD	R31,Y+3
+    00DD9 D027      RCALL	0x0E01
+    00DDA 91E9      LD	R30,Y+
+    00DDB 91F9      LD	R31,Y+
+    00DDC 9622      ADIW	R28,2
+    00DDD 9508      RET
+fpdiv2:
+    00DDE 93FA      ST	-Y,R31
+    00DDF 93EA      ST	-Y,R30
+    00DE0 2FEC      MOV	R30,R28
+    00DE1 2FFD      MOV	R31,R29
+    00DE2 9632      ADIW	R30,2
+    00DE3 D01D      RCALL	0x0E01
+    00DE4 91E9      LD	R30,Y+
+    00DE5 91F9      LD	R31,Y+
+    00DE6 9624      ADIW	R28,4
+    00DE7 9508      RET
+fpdiv1x:
+    00DE8 93FA      ST	-Y,R31
+    00DE9 93EA      ST	-Y,R30
+    00DEA 81EA      LDD	R30,Y+2
+    00DEB 81FB      LDD	R31,Y+3
+    00DEC D014      RCALL	0x0E01
+    00DED 91E9      LD	R30,Y+
+    00DEE 91F9      LD	R31,Y+
+    00DEF 8339      STD	Y+1,R19
+    00DF0 8328      ST	Y,R18
+    00DF1 931A      ST	-Y,R17
+    00DF2 930A      ST	-Y,R16
+    00DF3 9508      RET
+fpdiv2x:
+    00DF4 93FA      ST	-Y,R31
+    00DF5 93EA      ST	-Y,R30
+    00DF6 2FEC      MOV	R30,R28
+    00DF7 2FFD      MOV	R31,R29
+    00DF8 9632      ADIW	R30,2
+    00DF9 D007      RCALL	0x0E01
+    00DFA 91E9      LD	R30,Y+
+    00DFB 91F9      LD	R31,Y+
+    00DFC 833B      STD	Y+3,R19
+    00DFD 832A      STD	Y+2,R18
+    00DFE 8319      STD	Y+1,R17
+    00DFF 8308      ST	Y,R16
+    00E00 9508      RET
+    00E01 920A      ST	-Y,R0
+    00E02 921A      ST	-Y,R1
+    00E03 922A      ST	-Y,R2
+    00E04 923A      ST	-Y,R3
+    00E05 D11E      RCALL	saveFPRegs
+    00E06 933A      ST	-Y,R19
+    00E07 932A      ST	-Y,R18
+    00E08 931A      ST	-Y,R17
+    00E09 930A      ST	-Y,R16
+    00E0A 8100      LD	R16,Z
+    00E0B 8111      LDD	R17,Z+1
+    00E0C 8122      LDD	R18,Z+2
+    00E0D 8133      LDD	R19,Z+3
+    00E0E D0B7      RCALL	unpacku
+    00E0F F409      BNE	0x0E11
+    00E10 C053      RJMP	0x0E64
+    00E11 2CE6      MOV	R14,R6
+    00E12 2CD5      MOV	R13,R5
+    00E13 2CC4      MOV	R12,R4
+    00E14 2EB3      MOV	R11,R19
+    00E15 2EA2      MOV	R10,R18
+    00E16 2E91      MOV	R9,R17
+    00E17 2E80      MOV	R8,R16
+    00E18 9109      LD	R16,Y+
+    00E19 9119      LD	R17,Y+
+    00E1A 9129      LD	R18,Y+
+    00E1B 9139      LD	R19,Y+
+    00E1C D0A9      RCALL	unpacku
+    00E1D F199      BEQ	0x0E51
+    00E1E 246E      EOR	R6,R14
+    00E1F 184C      SUB	R4,R12
+    00E20 085D      SBC	R5,R13
+    00E21 E880      LDI	R24,0x80
+    00E22 1648      CP	R4,R24
+    00E23 0653      CPC	R5,R19
+    00E24 F00C      BLT	0x0E26
+    00E25 C031      RJMP	0x0E57
+    00E26 E881      LDI	R24,0x81
+    00E27 1648      CP	R4,R24
+    00E28 EF8F      LDI	R24,0xFF
+    00E29 0658      CPC	R5,R24
+    00E2A F40C      BGE	0x0E2C
+    00E2B C033      RJMP	0x0E5F
+    00E2C E280      LDI	R24,0x20
+    00E2D 2433      CLR	R3
+    00E2E 2E23      MOV	R2,R19
+    00E2F 2E12      MOV	R1,R18
+    00E30 2E01      MOV	R0,R17
+    00E31 2F30      MOV	R19,R16
+    00E32 2722      CLR	R18
+    00E33 2711      CLR	R17
+    00E34 2700      CLR	R16
+    00E35 9426      LSR	R2
+    00E36 9417      ROR	R1
+    00E37 9407      ROR	R0
+    00E38 9537      ROR	R19
+    00E39 9527      ROR	R18
+    00E3A 0F00      LSL	R16
+    00E3B 1F11      ROL	R17
+    00E3C 1F22      ROL	R18
+    00E3D 1F33      ROL	R19
+    00E3E 1C00      ROL	R0
+    00E3F 1C11      ROL	R1
+    00E40 1C22      ROL	R2
+    00E41 1C33      ROL	R3
+    00E42 F028      BCS	0x0E48
+    00E43 1808      SUB	R0,R8
+    00E44 0819      SBC	R1,R9
+    00E45 082A      SBC	R2,R10
+    00E46 083B      SBC	R3,R11
+    00E47 C004      RJMP	0x0E4C
+    00E48 0C08      ADD	R0,R8
+    00E49 1C19      ADC	R1,R9
+    00E4A 1C2A      ADC	R2,R10
+    00E4B 1C3B      ADC	R3,R11
+    00E4C F00A      BMI	0x0E4E
+    00E4D 6001      ORI	R16,1
+    00E4E 958A      DEC	R24
+    00E4F F751      BNE	0x0E3A
+    00E50 D08E      RCALL	normalize_and_pack
+    00E51 D0E1      RCALL	restoreFPRegs
+    00E52 9039      LD	R3,Y+
+    00E53 9029      LD	R2,Y+
+    00E54 9019      LD	R1,Y+
+    00E55 9009      LD	R0,Y+
+    00E56 9508      RET
+    00E57 EF0F      LDI	R16,0xFF
+    00E58 2F10      MOV	R17,R16
+    00E59 E72F      LDI	R18,0x7F
+    00E5A E73F      LDI	R19,0x7F
+    00E5B 2066      TST	R6
+    00E5C F3A1      BEQ	0x0E51
+    00E5D DE3E      RCALL	neg32
+    00E5E CFF2      RJMP	0x0E51
+    00E5F 2700      CLR	R16
+    00E60 2F10      MOV	R17,R16
+    00E61 2F20      MOV	R18,R16
+    00E62 2F30      MOV	R19,R16
+    00E63 CFED      RJMP	0x0E51
+    00E64 9109      LD	R16,Y+
+    00E65 9119      LD	R17,Y+
+    00E66 9129      LD	R18,Y+
+    00E67 9139      LD	R19,Y+
+    00E68 CFEE      RJMP	0x0E57
+fpmul:
+    00E69 D0BA      RCALL	saveFPRegs
+    00E6A 93AA      ST	-Y,R26
+    00E6B 93BA      ST	-Y,R27
+    00E6C D059      RCALL	unpacku
+    00E6D F191      BEQ	0x0EA0
+    00E6E 2CE6      MOV	R14,R6
+    00E6F 2CD5      MOV	R13,R5
+    00E70 2CC4      MOV	R12,R4
+    00E71 2EA2      MOV	R10,R18
+    00E72 2E91      MOV	R9,R17
+    00E73 2E80      MOV	R8,R16
+    00E74 8100      LD	R16,Z
+    00E75 8111      LDD	R17,Z+1
+    00E76 8122      LDD	R18,Z+2
+    00E77 8133      LDD	R19,Z+3
+    00E78 D04D      RCALL	unpacku
+    00E79 F131      BEQ	0x0EA0
+    00E7A 246E      EOR	R6,R14
+    00E7B 0C4C      ADD	R4,R12
+    00E7C 1C5D      ADC	R5,R13
+    00E7D E880      LDI	R24,0x80
+    00E7E 1648      CP	R4,R24
+    00E7F 0653      CPC	R5,R19
+    00E80 F51C      BGE	0x0EA4
+    00E81 E881      LDI	R24,0x81
+    00E82 1648      CP	R4,R24
+    00E83 EF8F      LDI	R24,0xFF
+    00E84 0658      CPC	R5,R24
+    00E85 F11C      BLT	0x0EA9
+    00E86 E188      LDI	R24,0x18
+    00E87 2E78      MOV	R7,R24
+    00E88 2788      CLR	R24
+    00E89 2799      CLR	R25
+    00E8A 27AA      CLR	R26
+    00E8B 27BB      CLR	R27
+    00E8C 2EBB      MOV	R11,R27
+    00E8D 95B6      LSR	R27
+    00E8E 95A7      ROR	R26
+    00E8F 9597      ROR	R25
+    00E90 9587      ROR	R24
+    00E91 9527      ROR	R18
+    00E92 9517      ROR	R17
+    00E93 9507      ROR	R16
+    00E94 F420      BCC	0x0E99
+    00E95 0D88      ADD	R24,R8
+    00E96 1D99      ADC	R25,R9
+    00E97 1DAA      ADC	R26,R10
+    00E98 1DBB      ADC	R27,R11
+    00E99 947A      DEC	R7
+    00E9A F791      BNE	0x0E8D
+    00E9B 2F3B      MOV	R19,R27
+    00E9C 2F2A      MOV	R18,R26
+    00E9D 2F19      MOV	R17,R25
+    00E9E 2F08      MOV	R16,R24
+    00E9F D03F      RCALL	normalize_and_pack
+    00EA0 91B9      LD	R27,Y+
+    00EA1 91A9      LD	R26,Y+
+    00EA2 D090      RCALL	restoreFPRegs
+    00EA3 9508      RET
+    00EA4 EF0F      LDI	R16,0xFF
+    00EA5 2F10      MOV	R17,R16
+    00EA6 E72F      LDI	R18,0x7F
+    00EA7 E73F      LDI	R19,0x7F
+    00EA8 CFF7      RJMP	0x0EA0
+    00EA9 2700      CLR	R16
+    00EAA 2F10      MOV	R17,R16
+    00EAB 2F20      MOV	R18,R16
+    00EAC 2F30      MOV	R19,R16
+    00EAD CFF2      RJMP	0x0EA0
+fpmul1:
+    00EAE 93FA      ST	-Y,R31
+    00EAF 93EA      ST	-Y,R30
+    00EB0 81EA      LDD	R30,Y+2
+    00EB1 81FB      LDD	R31,Y+3
+    00EB2 DFB6      RCALL	fpmul
+    00EB3 91E9      LD	R30,Y+
+    00EB4 91F9      LD	R31,Y+
+    00EB5 9622      ADIW	R28,2
+    00EB6 9508      RET
+unpacks:
+    00EB7 D00E      RCALL	unpacku
+    00EB8 F021      BEQ	0x0EBD
+    00EB9 2066      TST	R6
+    00EBA F009      BEQ	0x0EBC
+    00EBB DDE0      RCALL	neg32
+    00EBC 9498      BCLR	1
+    00EBD 9508      RET
+tstR16_R19:
+    00EBE 2300      TST	R16
+    00EBF F429      BNE	0x0EC5
+    00EC0 2311      TST	R17
+    00EC1 F419      BNE	0x0EC5
+    00EC2 2322      TST	R18
+    00EC3 F409      BNE	0x0EC5
+    00EC4 2333      TST	R19
+    00EC5 9508      RET
+unpacku:
+    00EC6 DFF7      RCALL	tstR16_R19
+    00EC7 F099      BEQ	0x0EDB
+    00EC8 938A      ST	-Y,R24
+    00EC9 2E63      MOV	R6,R19
+    00ECA E880      LDI	R24,0x80
+    00ECB 2268      AND	R6,R24
+    00ECC 0F22      LSL	R18
+    00ECD 1F33      ROL	R19
+    00ECE 2E43      MOV	R4,R19
+    00ECF E78F      LDI	R24,0x7F
+    00ED0 1A48      SUB	R4,R24
+    00ED1 2455      CLR	R5
+    00ED2 2788      CLR	R24
+    00ED3 0A58      SBC	R5,R24
+    00ED4 9526      LSR	R18
+    00ED5 E830      LDI	R19,0x80
+    00ED6 2B23      OR	R18,R19
+    00ED7 2733      CLR	R19
+    00ED8 9189      LD	R24,Y+
+    00ED9 9498      BCLR	1
+    00EDA 9508      RET
+    00EDB 2444      CLR	R4
+    00EDC 2455      CLR	R5
+    00EDD 2466      CLR	R6
+    00EDE 9508      RET
+normalize_and_pack:
+    00EDF DFDE      RCALL	tstR16_R19
+    00EE0 F409      BNE	0x0EE2
+    00EE1 9508      RET
+    00EE2 93AA      ST	-Y,R26
+    00EE3 93BA      ST	-Y,R27
+    00EE4 01D2      MOVW	R26,R4
+    00EE5 939A      ST	-Y,R25
+    00EE6 938A      ST	-Y,R24
+    00EE7 E78E      LDI	R24,0x7E
+    00EE8 E090      LDI	R25,0
+    00EE9 2333      TST	R19
+    00EEA F049      BEQ	0x0EF4
+    00EEB 9536      LSR	R19
+    00EEC 9527      ROR	R18
+    00EED 9517      ROR	R17
+    00EEE 9507      ROR	R16
+    00EEF 17A8      CP	R26,R24
+    00EF0 07B9      CPC	R27,R25
+    00EF1 F4CC      BGE	0x0F0B
+    00EF2 9611      ADIW	R26,1
+    00EF3 CFF5      RJMP	0x0EE9
+    00EF4 9580      COM	R24
+    00EF5 9590      COM	R25
+    00EF6 9601      ADIW	R24,1
+    00EF7 2322      TST	R18
+    00EF8 F0BA      BMI	0x0F10
+    00EF9 0F00      LSL	R16
+    00EFA 1F11      ROL	R17
+    00EFB 1F22      ROL	R18
+    00EFC 17A8      CP	R26,R24
+    00EFD 07B9      CPC	R27,R25
+    00EFE F014      BLT	0x0F01
+    00EFF 9711      SBIW	R26,1
+    00F00 CFF6      RJMP	0x0EF7
+    00F01 2700      CLR	R16
+    00F02 2711      CLR	R17
+    00F03 2722      CLR	R18
+    00F04 2733      CLR	R19
+    00F05 9189      LD	R24,Y+
+    00F06 9199      LD	R25,Y+
+    00F07 012D      MOVW	R4,R26
+    00F08 91B9      LD	R27,Y+
+    00F09 91A9      LD	R26,Y+
+    00F0A 9508      RET
+    00F0B 2733      CLR	R19
+    00F0C EF0F      LDI	R16,0xFF
+    00F0D 2F10      MOV	R17,R16
+    00F0E E72F      LDI	R18,0x7F
+    00F0F 2F32      MOV	R19,R18
+    00F10 9189      LD	R24,Y+
+    00F11 9199      LD	R25,Y+
+    00F12 012D      MOVW	R4,R26
+    00F13 C002      RJMP	0x0F16
+pack:
+    00F14 93AA      ST	-Y,R26
+    00F15 93BA      ST	-Y,R27
+    00F16 DFA7      RCALL	tstR16_R19
+    00F17 F049      BEQ	0x0F21
+    00F18 01D2      MOVW	R26,R4
+    00F19 58A1      SUBI	R26,0x81
+    00F1A 4FBF      SBCI	R27,0xFF
+    00F1B 012D      MOVW	R4,R26
+    00F1C 2D34      MOV	R19,R4
+    00F1D 0F22      LSL	R18
+    00F1E 9536      LSR	R19
+    00F1F 9527      ROR	R18
+    00F20 2936      OR	R19,R6
+    00F21 91B9      LD	R27,Y+
+    00F22 91A9      LD	R26,Y+
+    00F23 9508      RET
+saveFPRegs:
+    00F24 924A      ST	-Y,R4
+    00F25 925A      ST	-Y,R5
+    00F26 926A      ST	-Y,R6
+    00F27 927A      ST	-Y,R7
+    00F28 928A      ST	-Y,R8
+    00F29 929A      ST	-Y,R9
+    00F2A 92AA      ST	-Y,R10
+    00F2B 92BA      ST	-Y,R11
+    00F2C 92CA      ST	-Y,R12
+    00F2D 92DA      ST	-Y,R13
+    00F2E 92EA      ST	-Y,R14
+    00F2F 92FA      ST	-Y,R15
+    00F30 938A      ST	-Y,R24
+    00F31 939A      ST	-Y,R25
+    00F32 9508      RET
+restoreFPRegs:
+    00F33 9199      LD	R25,Y+
+    00F34 9189      LD	R24,Y+
+    00F35 90F9      LD	R15,Y+
+    00F36 90E9      LD	R14,Y+
+    00F37 90D9      LD	R13,Y+
+    00F38 90C9      LD	R12,Y+
+    00F39 90B9      LD	R11,Y+
+    00F3A 90A9      LD	R10,Y+
+    00F3B 9099      LD	R9,Y+
+    00F3C 9089      LD	R8,Y+
+    00F3D 9079      LD	R7,Y+
+    00F3E 9069      LD	R6,Y+
+    00F3F 9059      LD	R5,Y+
+    00F40 9049      LD	R4,Y+
+    00F41 9508      RET
+fpcmp:
+    00F42 DDCC      RCALL	fpsub
+    00F43 2333      TST	R19
+    00F44 F032      BMI	0x0F4B
+    00F45 DF78      RCALL	tstR16_R19
+    00F46 F011      BEQ	0x0F49
+    00F47 E001      LDI	R16,1
+    00F48 9508      RET
+    00F49 2700      CLR	R16
+    00F4A 9508      RET
+    00F4B EF0F      LDI	R16,0xFF
+    00F4C 9508      RET
+fpcmp1:
+    00F4D 93FA      ST	-Y,R31
+    00F4E 93EA      ST	-Y,R30
+    00F4F 81EA      LDD	R30,Y+2
+    00F50 81FB      LDD	R31,Y+3
+    00F51 DFF0      RCALL	fpcmp
+    00F52 91E9      LD	R30,Y+
+    00F53 91F9      LD	R31,Y+
+    00F54 9622      ADIW	R28,2
+    00F55 2300      TST	R16
+    00F56 9508      RET
+fpcmp2:
+    00F57 93FA      ST	-Y,R31
+    00F58 93EA      ST	-Y,R30
+    00F59 2FEC      MOV	R30,R28
+    00F5A 2FFD      MOV	R31,R29
+    00F5B 9632      ADIW	R30,2
+    00F5C DFE5      RCALL	fpcmp
+    00F5D 91E9      LD	R30,Y+
+    00F5E 91F9      LD	R31,Y+
+    00F5F 9624      ADIW	R28,4
+    00F60 2300      TST	R16
+    00F61 9508      RET
